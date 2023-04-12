@@ -5,13 +5,15 @@ from torch.utils.data import DataLoader
 
 import flwr as fl
 import torch
-
 import utils
 
 import warnings
-
 warnings.filterwarnings("ignore")
 
+from comet_ml import Experiment
+# from comet_ml.integration.pytorch import log_model
+
+utils.set_seed(42)
 
 def fit_config(server_round: int):
     """Return training configuration dict for each round.
@@ -20,6 +22,7 @@ def fit_config(server_round: int):
     local epoch, increase to two local epochs afterwards.
     """
     config = {
+        "server_round": server_round,
         "batch_size": 16,
         "local_epochs": 1 if server_round < 2 else 2,
     }
@@ -34,10 +37,10 @@ def evaluate_config(server_round: int):
     evaluation steps.
     """
     val_steps = 5 if server_round < 4 else 10
-    return {"val_steps": val_steps}
+    return {"val_steps": val_steps, "server_round": server_round}
 
 
-def get_evaluate_fn(model: torch.nn.Module, toy: bool):
+def get_evaluate_fn(model: torch.nn.Module, toy: bool, experiment: Optional[Experiment] = None):
     """Return an evaluation function for server-side evaluation."""
 
     # Load data and model here to avoid the overhead of doing it in `evaluate` itself
@@ -65,6 +68,9 @@ def get_evaluate_fn(model: torch.nn.Module, toy: bool):
         model.load_state_dict(state_dict, strict=True)
 
         loss, accuracy = utils.test(model, valLoader)
+        if experiment is not None:
+            experiment.log_metric("central_loss", loss, step=server_round)
+            experiment.log_metric("central_accuracy", accuracy, step=server_round)
         return loss, {"accuracy": accuracy}
 
     return evaluate
@@ -76,30 +82,41 @@ def main():
     2. server-side parameter evaluation
     """
 
-    # Parse command line argument `partition`
-    parser = argparse.ArgumentParser(description="Flower")
-    parser.add_argument(
-        "--toy",
-        type=bool,
-        default=False,
-        required=False,
-        help="Set to true to use only 10 datasamples for validation. \
-            Useful for testing purposes. Default: False",
+    experiment = Experiment(
+        api_key = "3JenmgUXXmWcKcoRk8Yra0XcD",
+        project_name = "test1",
+        workspace="neighborheo"
     )
 
-    args = parser.parse_args()
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Start Flower server with experiment key.")
+    parser.add_argument("--experiment_key", type=str, required=True, help="Experiment key")
+    parser.add_argument("--toy", type=bool, default=False, required=False, help="Set to true to use only 10 datasamples for validation. Useful for testing purposes. Default: False" )
+    parser.add_argument("--port", type=int, default=8080, required=False, help="Port to use for the server. Default: 8080")
+    parser.add_argument("--rounds", type=int, default=10, required=False, help="Number of rounds to run. Default: 10")
 
+    args = parser.parse_args()
+    print("Experiment key:", args.experiment_key, "port:", args.port)
+    args.learning_rate = 0.5
+    args.steps = 100000
+    args.batch_size = 50
+
+    # Report multiple hyperparameters using a dictionary:
+    experiment.log_parameters(args)
+    experiment.set_name(f"srv_lr_{args.learning_rate}_stps_{args.steps}_bch_{args.batch_size}_p{args.port}")
+
+    # Parse command line argument `partition`
     model = utils.load_efficientnet(classes=10)
 
     model_parameters = [val.cpu().numpy() for _, val in model.state_dict().items()]
 
     # Create strategy
     strategy = fl.server.strategy.FedAvg(
-        fraction_fit=0.2,
-        fraction_evaluate=0.2,
+        fraction_fit=1, #0.2,
+        fraction_evaluate=1, #0.2,
         min_fit_clients=2,
         min_evaluate_clients=2,
-        min_available_clients=10,
+        min_available_clients=2, #10,
         evaluate_fn=get_evaluate_fn(model, args.toy),
         on_fit_config_fn=fit_config,
         on_evaluate_config_fn=evaluate_config,
@@ -108,11 +125,15 @@ def main():
 
     # Start Flower server for four rounds of federated learning
     fl.server.start_server(
-        server_address="0.0.0.0:8080",
-        config=fl.server.ServerConfig(num_rounds=4),
+        server_address=f"0.0.0.0:{args.port}",
+        config=fl.server.ServerConfig(num_rounds=args.rounds),
         strategy=strategy,
     )
-
+    
+    experiment.end()
 
 if __name__ == "__main__":
     main()
+
+
+

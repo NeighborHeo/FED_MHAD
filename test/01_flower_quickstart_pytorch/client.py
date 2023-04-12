@@ -1,5 +1,7 @@
+import argparse
 import warnings
 from collections import OrderedDict
+
 
 import flwr as fl
 import torch
@@ -10,6 +12,42 @@ from torchvision.datasets import CIFAR10
 from torchvision.transforms import Compose, Normalize, ToTensor
 from tqdm import tqdm
 
+# import utils
+
+from comet_ml import Experiment
+from comet_ml.integration.pytorch import log_model
+
+# utils.set_seedc(42)
+
+experiment = Experiment(
+  api_key = "3JenmgUXXmWcKcoRk8Yra0XcD",
+  project_name = "test1",
+  workspace="neighborheo"
+)
+
+# Parse command line arguments
+parser = argparse.ArgumentParser(description="Start Flower server with experiment key.")
+
+parser.add_argument("--index", type=int, required=True, help="Index of the client")
+parser.add_argument("--experiment_key", type=str, required=True, help="Experiment key")
+
+args = parser.parse_args()
+print("Experiment key:", args.experiment_key)
+args.learning_rate = 0.5
+args.steps = 100000
+args.batch_size = 50
+
+
+# Report multiple hyperparameters using a dictionary:
+experiment.log_parameters(args)
+experiment.set_name(f"client_{args.index}_lr_{args.learning_rate}_stps_{args.steps}_bch_{args.batch_size}")
+
+# Initialize and train your model
+# model = TheModelClass()
+# train(model)
+
+# Seamlessly log your Pytorch model
+# log_model(experiment, model, model_name="TheModel")
 
 # #############################################################################
 # 1. Regular PyTorch pipeline: nn.Module, train, test, and DataLoader
@@ -44,12 +82,13 @@ def train(net, trainloader, epochs):
     """Train the model on the training set."""
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
-    for _ in range(epochs):
+    for i in range(epochs):
+        print("Epoch", i)
         for images, labels in tqdm(trainloader):
+            print("images", len(images))
             optimizer.zero_grad()
             criterion(net(images.to(DEVICE)), labels.to(DEVICE)).backward()
             optimizer.step()
-
 
 def test(net, testloader):
     """Validate the model on the test set."""
@@ -72,6 +111,25 @@ def load_data():
     testset = CIFAR10("~/.data", train=False, download=True, transform=trf)
     return DataLoader(trainset, batch_size=32, shuffle=True), DataLoader(testset)
 
+# def load_pascal_voc_data():
+#     """Load PASCAL VOC (training and test set)."""
+#     N_parties = 10
+#     priv_data = [None] * N_parties
+#     for i in range(N_parties):
+#         priv_data[i] = {}
+#         path = pathlib.Path(args.datapath).joinpath('PASCAL_VOC_2012', f'N_clients_{args.N_parties}_alpha_{args.alpha:.1f}')
+#         party_img = np.load(path.joinpath(f'Party_{i}_X_data.npy'))
+#         party_label = np.load(path.joinpath(f'Party_{i}_y_data.npy'))
+#         party_img, party_label = filter_images_by_label_type(args.task, party_img, party_label)
+#         priv_data[i]['x'] = party_img.copy()
+#         priv_data[i]['y'] = party_label.copy()
+    
+#     print(f"y label : {priv_data[0]['y']}")
+#     for i in range(N_parties):
+#         print(f'Party_{i} data shape: {priv_data[i]["x"].shape}')
+#     print(f'Public data shape: {public_dataset.img.shape}')
+#     print(f'Test data shape: {test_dataset.img.shape}')
+#     return priv_data, public_dataset, test_dataset
 
 # #############################################################################
 # 2. Federation of the pipeline with Flower
@@ -80,7 +138,6 @@ def load_data():
 # Load model and data (simple CNN, CIFAR-10)
 net = Net().to(DEVICE)
 trainloader, testloader = load_data()
-
 
 # Define Flower client
 class FlowerClient(fl.client.NumPyClient):
@@ -93,18 +150,21 @@ class FlowerClient(fl.client.NumPyClient):
         net.load_state_dict(state_dict, strict=True)
 
     def fit(self, parameters, config):
+        print("fit")
         self.set_parameters(parameters)
         train(net, trainloader, epochs=1)
         return self.get_parameters(config={}), len(trainloader.dataset), {}
 
     def evaluate(self, parameters, config):
+        print("evaluate")
         self.set_parameters(parameters)
         loss, accuracy = test(net, testloader)
         return loss, len(testloader.dataset), {"accuracy": accuracy}
-
 
 # Start Flower client
 fl.client.start_numpy_client(
     server_address="127.0.0.1:8080",
     client=FlowerClient(),
 )
+
+experiment.end()

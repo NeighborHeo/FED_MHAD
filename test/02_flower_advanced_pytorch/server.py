@@ -13,7 +13,6 @@ warnings.filterwarnings("ignore")
 from comet_ml import Experiment
 # from comet_ml.integration.pytorch import log_model
 
-utils.set_seed(42)
 
 def fit_config(server_round: int):
     """Return training configuration dict for each round.
@@ -81,6 +80,7 @@ def main():
     1. server-side parameter initialization
     2. server-side parameter evaluation
     """
+    utils.set_seed(42)
 
     experiment = Experiment(
         api_key = "3JenmgUXXmWcKcoRk8Yra0XcD",
@@ -94,16 +94,17 @@ def main():
     parser.add_argument("--toy", type=bool, default=False, required=False, help="Set to true to use only 10 datasamples for validation. Useful for testing purposes. Default: False" )
     parser.add_argument("--port", type=int, default=8080, required=False, help="Port to use for the server. Default: 8080")
     parser.add_argument("--rounds", type=int, default=10, required=False, help="Number of rounds to run. Default: 10")
-
+    parser.add_argument("--learning_rate", type=float, default=0.1, required=False, help="Learning rate. Default: 0.1")
+    parser.add_argument("--momentum", type=float, default=0.9, required=False, help="Momentum. Default: 0.9")
+    parser.add_argument("--weight_decay", type=float, default=1e-4, required=False, help="Weight decay. Default: 1e-4")
+    parser.add_argument("--batch_size", type=int, default=32, required=False, help="Batch size. Default: 32")
+    
     args = parser.parse_args()
     print("Experiment key:", args.experiment_key, "port:", args.port)
-    args.learning_rate = 0.5
-    args.steps = 100000
-    args.batch_size = 50
 
     # Report multiple hyperparameters using a dictionary:
     experiment.log_parameters(args)
-    experiment.set_name(f"srv_lr_{args.learning_rate}_stps_{args.steps}_bch_{args.batch_size}_p{args.port}")
+    experiment.set_name(f"srv_lr_{args.learning_rate}_lr_{args.learning_rate}_bs_{args.batch_size}_rd_{args.rounds}_p_{args.port}")
 
     # Parse command line argument `partition`
     model = utils.load_efficientnet(classes=10)

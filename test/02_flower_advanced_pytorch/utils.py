@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torchvision.transforms as transforms
 from torchvision.datasets import CIFAR10
@@ -50,13 +51,13 @@ def load_partition(idx: int):
     )
     return (train_parition, test_parition)
 
-def train(net, trainloader, valloader, epochs, device: str = "cpu"):
+def train(net, trainloader, valloader, epochs, device: str = "cpu", args=None):
     """Train the network on the training set."""
     print("Starting training...")
     net.to(device)  # move model to GPU if available
     criterion = torch.nn.CrossEntropyLoss().to(device)
     optimizer = torch.optim.SGD(
-        net.parameters(), lr=0.1, momentum=0.9, weight_decay=1e-4
+        net.parameters(), lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay
     )
     net.train()
     for i in range(epochs):
@@ -81,7 +82,7 @@ def train(net, trainloader, valloader, epochs, device: str = "cpu"):
     }
     return results
 
-def test(net, testloader, steps: int = None, device: str = "cpu"):
+def test(net, testloader, steps: int = None, device: str = "cpu", args=None):
     """Validate the network on the entire test set."""
     print("Starting evalutation...")
     net.to(device)  # move model to GPU if available

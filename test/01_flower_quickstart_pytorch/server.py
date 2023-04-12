@@ -41,10 +41,10 @@ args.batch_size = 50
 
 # Report multiple hyperparameters using a dictionary:
 experiment.log_parameters(args)
-experiment.set_name(f"srv_lr_{args.learning_rate}_stps_{args.steps}_bch_{args.batch_size}")
+experiment.set_name(f"central_lr_{args.learning_rate}_stps_{args.steps}_bch_{args.batch_size}")
 
 
-def get_evaluate_fn(model: torch.nn.Module):
+def get_evaluate_fn(model: torch.nn.Module, experiment: Optional[Experiment] = None):
     """Return an evaluation function for server-side evaluation."""
 
     # Load data and model here to avoid the overhead of doing it in `evaluate` itself
@@ -84,7 +84,7 @@ def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
 model = utils.load_efficientnet(classes=10)
 
 # Define strategy
-strategy = fl.server.strategy.FedAvg(evaluate_metrics_aggregation_fn=weighted_average, evaluate_fn=get_evaluate_fn(model, args.toy))
+strategy = fl.server.strategy.FedAvg(evaluate_metrics_aggregation_fn=weighted_average, evaluate_fn=get_evaluate_fn(model, experiment))
 
 # Start Flower server
 fl.server.start_server(

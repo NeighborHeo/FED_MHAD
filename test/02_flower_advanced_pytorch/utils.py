@@ -98,6 +98,8 @@ def test(net, testloader, steps: int = None, device: str = "cpu", args=None):
             correct += (predicted == labels).sum().item()
             if steps is not None and batch_idx == steps:
                 break
+            
+    loss /= len(testloader.dataset)
     accuracy = correct / len(testloader.dataset)
     net.to("cpu")  # move model back to CPU
     return loss, accuracy

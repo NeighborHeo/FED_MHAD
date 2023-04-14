@@ -63,7 +63,9 @@ class CustomServer:
             model.load_state_dict(state_dict, strict=True)
 
             device = torch.device("cuda:0" if torch.cuda.is_available() and self.args.use_cuda else "cpu")
-            loss, accuracy = utils.test(model, valLoader, device=device)
+            result = utils.test(model, valLoader, device=device)
+            accuracy = result["acc"]
+            loss = result["loss"]
             
             is_best_accuracy = self.early_stopper.is_best_accuracy(accuracy)
             if is_best_accuracy:
@@ -75,10 +77,10 @@ class CustomServer:
                 # todo : stop server
                 
             if self.experiment is not None:
-                self.experiment.log_metric("test_loss", loss, step=server_round)
-                self.experiment.log_metric("test_accuracy", accuracy, step=server_round)
+                result = {f"test_" + k: v for k, v in result.items()}
+                self.experiment.log_metrics(result, step=server_round)
                 
-            return loss, {"accuracy": accuracy}
+            return float(loss), {"accuracy": float(accuracy)}
 
         return evaluate
     
@@ -122,7 +124,7 @@ def init_argurments() -> argparse.Namespace:
     parser.add_argument("--dataset", type=str, default="pascal_voc", required=False, help="Dataset to use. Default: pascal_voc")
     parser.add_argument("--num_classes", type=int, default=20, required=False, help="Number of classes. Default: 10")
     parser.add_argument("--N_parties", type=int, default=5, required=False, help="Number of clients to use. Default: 10")
-    parser.add_argument("--task", type=str, default="singlelabel", required=False, help="Task to run. Default: singlelabel")
+    parser.add_argument("--task", type=str, default="multilabel", required=False, help="Task to run. Default: multilabel")
     args = parser.parse_args()
     print("Experiment key:", args.experiment_key, "port:", args.port)
     return args
@@ -130,7 +132,7 @@ def init_argurments() -> argparse.Namespace:
 def init_comet_experiment(args: argparse.Namespace):
     experiment = Experiment(
         api_key = "3JenmgUXXmWcKcoRk8Yra0XcD",
-        project_name = "test1",
+        project_name = "benchmark_fedavg_multilabel",
         workspace="neighborheo"
     )
     experiment.log_parameters(args)

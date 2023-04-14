@@ -102,8 +102,11 @@ class CustomClient(fl.client.NumPyClient):
         testloader = DataLoader(self.testset, batch_size=16)
 
         device = torch.device("cuda:0" if torch.cuda.is_available() and self.args.use_cuda else "cpu")
-        loss, accuracy = utils.test(model, testloader, steps, device)
-        self.experiment.log_metrics({"test_loss": loss, "test_accuracy": accuracy}, step=server_round)
+        result = utils.test(model, testloader, steps, device)
+        accuracy = result["acc"]
+        loss = result["loss"]
+        result = {f"test_" + k: v for k, v in result.items()}
+        self.experiment.log_metrics(result, step=server_round)
         return float(loss), len(self.testset), {"accuracy": float(accuracy)}
 
 
@@ -148,7 +151,7 @@ def init_argurments():
     parser.add_argument("--dataset", type=str, default="pascal_voc", required=False, help="Dataset to use. Default: pascal_voc")
     parser.add_argument("--num_classes", type=int, default=20, required=False, help="Number of classes. Default: 10")
     parser.add_argument("--N_parties", type=int, default=5, required=False, help="Number of clients to use. Default: 10")
-    parser.add_argument("--task", type=str, default="singlelabel", required=False, help="Task to run. Default: singlelabel")
+    parser.add_argument("--task", type=str, default="multilabel", required=False, help="Task to run. Default: multilabel")
     
     args = parser.parse_args()
     print("Experiment key:", args.experiment_key, "port:", args.port)
@@ -157,7 +160,7 @@ def init_argurments():
 def init_comet_experiment(args: argparse.Namespace):
     experiment = Experiment(
         api_key = "3JenmgUXXmWcKcoRk8Yra0XcD",
-        project_name = "test1",
+        project_name = "benchmark_fedavg_multilabel",
         workspace="neighborheo"
     )
     experiment.log_parameters(args)

@@ -5,6 +5,7 @@ from torchvision.datasets import CIFAR10
 from tqdm import tqdm
 import os
 import inspect
+from metrics import compute_mean_average_precision, multi_label_top_margin_k_accuracy, compute_multi_accuracy
 import warnings
 import unittest
 
@@ -58,54 +59,98 @@ def train(net, trainloader, valloader, epochs, device: str = "cpu", args=None):
     print("Starting training...")
     
     net.to(device)  # move model to GPU if available
-    criterion = torch.nn.CrossEntropyLoss().to(device)
-    optimizer = torch.optim.SGD(
-        net.parameters(), lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay
-    )
+    if args == 'singlelabel' : 
+        criterion = torch.nn.CrossEntropyLoss().to(device)
+    else:
+        criterion = torch.nn.MultiLabelSoftMarginLoss().to(device)
+    
+    last_layer_name = list(net.named_children())[-1][0]
+    parameters = [
+        {'params': [p for n, p in net.named_parameters() if last_layer_name not in n], 'lr': args.learning_rate},
+        {'params': [p for n, p in net.named_parameters() if last_layer_name in n], 'lr': args.learning_rate*10},
+    ]
+    # if args.optim == 'SGD':
+    optimizer = torch.optim.SGD( params= parameters, lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay)
+    # else:    
+        # optimizer = torch.optim.Adam( params= parameters, lr=args.learning_rate, betas=(args.momentum, 0.999), weight_decay=args.weight_decay)
+        
     net.train()
     for i in range(epochs):
         print("Epoch: ", i)
         for images, labels in tqdm(trainloader):
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
-            loss = criterion(net(images), labels)
+            if args == 'singlelabel' : 
+                loss = criterion(net(images), labels)
+            else:
+                loss = criterion(net(images), labels.float())
             loss.backward()
             optimizer.step()
 
     net.to("cpu")  # move model back to CPU
 
-    train_loss, train_acc = test(net, trainloader)
-    val_loss, val_acc = test(net, valloader)
-        
-    results = {
-        "train_loss": train_loss,
-        "train_accuracy": train_acc,
-        "val_loss": val_loss,
-        "val_accuracy": val_acc,
-    }
+    # train_loss, train_acc = test(net, trainloader)
+    results1 = test(net, trainloader, args=args)
+    results1 = {f"train_{k}": v for k, v in results1.items()}
+    # val_loss, val_acc = test(net, valloader)
+    results2 = test(net, valloader, args=args)
+    results2 = {f"val_{k}": v for k, v in results2.items()}
+    results = {**results1, **results2}
     return results
 
 def test(net, testloader, steps: int = None, device: str = "cpu", args=None):
     """Validate the network on the entire test set."""
     print("Starting evalutation...")
     net.to(device)  # move model to GPU if available
-    criterion = torch.nn.CrossEntropyLoss()
+    if args == 'singlelabel' : 
+        criterion = torch.nn.CrossEntropyLoss().to(device)
+    else:
+        criterion = torch.nn.MultiLabelSoftMarginLoss().to(device)
     correct, loss = 0, 0.0
     net.eval()
+    m = torch.nn.Sigmoid()
+    output_list = []
+    target_list = []
+    total = 0
     with torch.no_grad():
-        for batch_idx, (images, labels) in tqdm(enumerate(testloader)):
-            images, labels = images.to(device), labels.to(device)
+        for batch_idx, (images, targets) in tqdm(enumerate(testloader)):
+            images, targets = images.to(device), targets.to(device)
             outputs = net(images)
-            loss += criterion(outputs, labels).item()
-            _, predicted = torch.max(outputs.data, axis=1)
-            correct += (predicted == labels).sum().item()
+
+            output_list.append(m(outputs).cpu().numpy())
+            target_list.append(targets.cpu().numpy())
+            
+            if args == 'singlelabel' :
+                loss += criterion(outputs, targets).item()
+            else:
+                loss += criterion(outputs, targets.float()).item()
+            total += outputs.size(0)
+            if args == 'singlelabel' :
+                _, predicted = torch.max(outputs.data, axis=1)
+                correct += predicted.eq(targets).sum().item()
+            else:
+                predicted = torch.sigmoid(outputs) > 0.5
+                correct += predicted.eq(targets).all(axis=1).sum().item()
+                
             if steps is not None and batch_idx == steps:
                 break
+    
+    output = np.concatenate(output_list, axis=0)
+    target = np.concatenate(target_list, axis=0)
+
+    acc, = compute_multi_accuracy(output, target)
+    top_k = multi_label_top_margin_k_accuracy(target, output, margin=0)
+    mAP, _ = compute_mean_average_precision(target, output)
+    acc, top_k, mAP = round(acc, 4), round(top_k, 4), round(mAP, 4)
+    print("Accuracy: ", acc, "Top-k: ", top_k, "mAP: ", mAP)
+    print("Accuracy: ", correct / total, "Loss: ", loss / total)
             
     loss /= len(testloader.dataset)
     accuracy = correct / len(testloader.dataset)
+    print("Accuracy: ", accuracy, "Loss: ", loss)
     net.to("cpu")  # move model back to CPU
-    return loss, accuracy
+    
+    return {"loss": loss, "accuracy": accuracy, "acc": acc, "top_k": top_k, "mAP": mAP}
 
 
 def replace_classifying_layer(efficientnet_model, num_classes: int = 10):
@@ -139,24 +184,6 @@ def load_efficientnet(entrypoint: str = "nvidia_efficientnet_b0", classes: int =
 def get_model_params(model):
     """Returns a model's parameters."""
     return [val.cpu().numpy() for _, val in model.state_dict().items()]
-
-class Test_acc(unittest.TestCase):
-    def test_loaddata(self):
-        from .dataset import PascalVocPartition
-        args = argparse.Namespace("")
-        args.datapath = '~/.data'
-        args.N_parties = 5
-        args.alpha = 1.0
-        args.task = 'singlelabel'
-        args.batch_size = 16
-        print(f"{os.path.basename(__file__)}:{inspect.currentframe().f_lineno}")
-        pascal = PascalVocPartition(args)
-        train_dataset, test_parition = pascal.load_partition(-1)
-        import torch.utils.data as data
-        valLoader = data.DataLoader(test_parition, batch_size=args.batch_size)
-        img, label = next(iter(valLoader))
-        print(label.shape)
-        print(label)
 
 if __name__ == '__main__':
     unittest.main()

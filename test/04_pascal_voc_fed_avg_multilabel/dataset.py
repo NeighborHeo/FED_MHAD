@@ -113,7 +113,7 @@ class Test_PascalVocPartition(unittest.TestCase):
         args.datapath = '~/.data'
         args.N_parties = 5
         args.alpha = 1.0
-        args.task = 'singlelabel'
+        args.task = 'multilabel'
         args.batch_size = 16
         print(f"{os.path.basename(__file__)}:{inspect.currentframe().f_lineno}")
         pascal = PascalVocPartition(args)

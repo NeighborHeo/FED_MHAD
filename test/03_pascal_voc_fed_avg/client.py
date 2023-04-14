@@ -60,9 +60,7 @@ class CustomClient(fl.client.NumPyClient):
         print(f"n_valset: {n_valset}")
 
         valset = torch.utils.data.Subset(self.trainset, range(0, n_valset))
-        trainset = torch.utils.data.Subset(
-            self.trainset, range(n_valset, len(self.trainset))
-        )
+        trainset = torch.utils.data.Subset(self.trainset, range(n_valset, len(self.trainset)))
 
         trainLoader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
         valLoader = DataLoader(valset, batch_size=batch_size)

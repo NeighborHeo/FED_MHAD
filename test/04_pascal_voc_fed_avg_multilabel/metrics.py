@@ -3,84 +3,62 @@ import torch
 import numpy as np
 from sklearn.metrics import average_precision_score, roc_auc_score
 
-# -----------------------------------------------
-def getAccuracy(y_true, y_pred):
+def calculateAccuracy(y_true, y_pred):
     temp = 0
     for i in range(y_true.shape[0]):
-        temp += sum(np.logical_and(y_true[i], y_pred[i])) / sum(np.logical_or(y_true[i], y_pred[i]))
+        true_pred_and = np.logical_and(y_true[i], y_pred[i])
+        true_pred_or = np.logical_or(y_true[i], y_pred[i])
+        temp += sum(true_pred_and) / sum(true_pred_or)
     return temp / y_true.shape[0]
 
-def get_Hamming_Loss(y_true, y_pred):
-    temp=0
-    for i in range(y_true.shape[0]):
-        temp += np.size(y_true[i] == y_pred[i]) - np.count_nonzero(y_true[i] == y_pred[i])
-    return temp/(y_true.shape[0] * y_true.shape[1])
+def computeHammingLoss(y_true, y_pred):
+    temp = np.count_nonzero(y_true != y_pred)
+    return temp / (y_true.shape[0] * y_true.shape[1])
 
-def getPrecision(y_true, y_pred):
-    temp = 0
-    for i in range(y_true.shape[0]):
-        if sum(y_true[i]) == 0:
-            continue
-        temp+= sum(np.logical_and(y_true[i], y_pred[i]))/ sum(y_true[i])
-    return temp/ y_true.shape[0]
+def calculatePrecision(y_true, y_pred):
+    true_pred_and = np.logical_and(y_true, y_pred)
+    true_sum = np.sum(y_true, axis=1)
+    return np.divide(np.sum(true_pred_and, axis=1), true_sum, where=true_sum!=0).mean()
 
-def getRecall(y_true, y_pred):
-    temp = 0
-    for i in range(y_true.shape[0]):
-        if sum(y_pred[i]) == 0:
-            continue
-        temp+= sum(np.logical_and(y_true[i], y_pred[i]))/ sum(y_pred[i])
-    return temp/ y_true.shape[0]
+def calculateRecall(y_true, y_pred):
+    true_pred_and = np.logical_and(y_true, y_pred)
+    pred_sum = np.sum(y_pred, axis=1)
+    return np.divide(np.sum(true_pred_and, axis=1), pred_sum, where=pred_sum!=0).mean()
 
-def getF1score(y_true, y_pred):
-    temp = 0
-    for i in range(y_true.shape[0]):
-        if (sum(y_true[i]) == 0) and (sum(y_pred[i]) == 0):
-            continue
-        temp+= (2*sum(np.logical_and(y_true[i], y_pred[i])))/ (sum(y_true[i])+sum(y_pred[i]))
-    return temp/ y_true.shape[0]
+def calculateF1score(y_true, y_pred):
+    true_pred_and = np.logical_and(y_true, y_pred)
+    true_sum = np.sum(y_true, axis=1)
+    pred_sum = np.sum(y_pred, axis=1)
+    return np.divide(2 * np.sum(true_pred_and, axis=1), true_sum + pred_sum, where=(true_sum + pred_sum)!=0).mean()
 
-def getMetrics(y_true, y_score, th):
+def calculateMetrics(y_true, y_score, th):
     y_pred = (y_score > th).astype(int)
-    acc = getAccuracy(y_true, y_pred)
-    pre = getPrecision(y_true, y_pred)
-    rec = getRecall(y_true, y_pred)
-    f1 = getF1score(y_true, y_pred)
+    acc = calculateAccuracy(y_true, y_pred)
+    pre = calculatePrecision(y_true, y_pred)
+    rec = calculateRecall(y_true, y_pred)
+    f1 = calculateF1score(y_true, y_pred)
     return acc, pre, rec, f1
-# -----------------------------------------------
 
-# def accuracy(output, target, topk=(1,)):
-#     """
-#     usage:
-#     prec1,prec5=accuracy(output,target,topk=(1,5))
-#     """
-#     maxk = max(topk)
-#     batchsize = target.size(0)
-#     if len(target.shape) == 2: #multil label
-#         output_mask = output > 0.5
-#         correct = (output_mask == target).sum()
-#         return [100.0*correct.float() / target.numel()]
-#     _, pred = output.topk(maxk, 1, True, True)
-#     pred = pred.t()
-#     correct = pred.eq(target.view(1, -1).expand_as(pred))
-#     res = []
-#     for k in topk:
-#         correct_k = correct[:k].view(-1).float().sum(0)
-#         res.append(correct_k.mul_(100.0 / batchsize).item())
-#     return res
+def calculateAccuracy(output, target, topk=(1,)):
+    with torch.no_grad():
+        if len(output.shape) == 2:
+            predicted = output.argmax(dim=1)
+        elif len(output.shape) == 1:
+            predicted = output.round().long()
+        else:
+            raise ValueError("Invalid output shape. Expected 1D or 2D tensor.")
 
-def accuracyforsinglelabel(output, target, topk=(1,)):
-    output = torch.tensor(output)
-    target = torch.tensor(target)
-    if len(output.shape) == 2:
-        predicted = output.argmax(dim=1)
-    if len(target.shape) == 2:
-        target = target.argmax(dim=1)
-    
-    total, correct = 0, 0
-    total += target.size(0)
-    correct += predicted.eq(target).sum().item()
-    return correct / total
+        if len(target.shape) == 2:
+            target = target.argmax(dim=1)
+        elif len(target.shape) == 1:
+            target = target.round().long()
+        else:
+            raise ValueError("Invalid target shape. Expected 1D or 2D tensor.")
+
+        correct = (predicted == target).sum().item()
+        total = target.size(0)
+
+        return correct / total
 
 def compute_multi_accuracy(output, target, topk=(1,)):
     """
@@ -93,12 +71,12 @@ def compute_multi_accuracy(output, target, topk=(1,)):
     opt_th = 0
     best_acc = 0
     for th in th_ls:
-        acc, pre, rec, f1 = getMetrics(target, output, th)
+        acc, pre, rec, f1 = calculateMetrics(target, output, th)
         if acc > best_acc:
             best_acc = acc
             opt_th = th
 
-    acc, pre, rec, f1 = getMetrics(target, output, opt_th)
+    acc, pre, rec, f1 = calculateMetrics(target, output, opt_th)
     # print(f"opt_th: {opt_th:.2f}, best_acc: {best_acc:.2f}, pre: {pre:.2f}, rec: {rec:.2f}, f1: {f1:.2f}")
         
     res = []

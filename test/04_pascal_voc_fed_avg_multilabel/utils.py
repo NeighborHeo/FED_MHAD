@@ -67,7 +67,7 @@ def train(net, trainloader, valloader, epochs, device: str = "cpu", args=None):
     last_layer_name = list(net.named_children())[-1][0]
     parameters = [
         {'params': [p for n, p in net.named_parameters() if last_layer_name not in n], 'lr': args.learning_rate},
-        {'params': [p for n, p in net.named_parameters() if last_layer_name in n], 'lr': args.learning_rate*10},
+        {'params': [p for n, p in net.named_parameters() if last_layer_name in n], 'lr': args.learning_rate*100},
     ]
     # if args.optim == 'SGD':
     optimizer = torch.optim.SGD( params= parameters, lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay)

@@ -11,7 +11,7 @@ def calculateAccuracy(y_true, y_pred):
         temp += sum(true_pred_and) / sum(true_pred_or)
     return temp / y_true.shape[0]
 
-def computeHammingLoss(y_true, y_pred):
+def calculateHammingLoss(y_true, y_pred):
     temp = np.count_nonzero(y_true != y_pred)
     return temp / (y_true.shape[0] * y_true.shape[1])
 
@@ -39,7 +39,7 @@ def calculateMetrics(y_true, y_score, th):
     f1 = calculateF1score(y_true, y_pred)
     return acc, pre, rec, f1
 
-def calculateAccuracy(output, target, topk=(1,)):
+def compute_single_accuracy(output, target, topk=(1,)):
     with torch.no_grad():
         if len(output.shape) == 2:
             predicted = output.argmax(dim=1)

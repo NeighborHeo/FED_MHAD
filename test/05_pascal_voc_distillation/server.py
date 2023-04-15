@@ -44,7 +44,7 @@ class CustomServer:
     def get_evaluate_fn(self, model: torch.nn.Module, toy: bool):
         # trainset, _, _ = utils.load_data()
         pascal_voc_partition = PascalVocPartition(args=self.args)
-        trainset, testset = pascal_voc_partition.load_partition(-1)
+        trainset, testset, publicset = pascal_voc_partition.load_partition(-1)
         n_train = len(testset)
         print(f"n_train: {n_train}")
         if toy:

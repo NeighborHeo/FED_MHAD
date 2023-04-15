@@ -17,7 +17,7 @@ warnings.filterwarnings("ignore")
 from comet_ml import Experiment
 # from comet_ml.integration.pytorch import log_model
 
-class CustomClient(fl.client.NumPyClient):
+class CustomDistillClient(fl.client.NumPyClient):
     def __init__(
         self,
         trainset: torchvision.datasets,
@@ -33,7 +33,8 @@ class CustomClient(fl.client.NumPyClient):
         self.args = args
         self.save_path = f"checkpoints/{args.port}_client_{args.index}_best_models"
         self.early_stopper = EarlyStopper(patience=5, delta=1e-4, checkpoint_dir=self.save_path)
-        
+        # todo : for read public dataloader 
+        # todo : add local train function
 
     def set_parameters(self, parameters):
         """Loads a efficientnet model and replaces it parameters with the ones
@@ -43,7 +44,29 @@ class CustomClient(fl.client.NumPyClient):
         state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
         # save file 
         model.load_state_dict(state_dict, strict=True)
+        
         return model
+    
+    def local_training(self, model, trainLoader, valLoader, epochs, device, args):
+        # todo : add local training function
+        
+        # running_loss = 0.0
+        # for _ in range(local_epoch):
+        #     for data in trainloader:
+        #         _, x, y = data
+        #         x = x.to(self.device)
+        #         y = y.to(self.device).to(torch.int64)
+
+        #         optimizer.zero_grad()
+        #         loss = criterion(self(x), y)
+        #         loss.backward()
+        #         optimizer.step()
+
+        #         running_loss += loss.item()
+
+        # return running_loss
+
+        pass
 
     def fit(self, parameters, config):
         """Train parameters on the locally held training set."""
@@ -121,7 +144,7 @@ def client_dry_run(experiment: Optional[Experiment] = None
     testset = torch.utils.data.Subset(testset, range(10))
     device = torch.device("cuda:0" if torch.cuda.is_available() and args.use_cuda else "cpu")
     print("Using device:", device)
-    client = CustomClient(trainset, testset, device, experiment= experiment, args= args)
+    client = CustomDistillClient(trainset, testset, device, experiment= experiment, args= args)
     client.fit(
         utils.get_model_params(model),
         {"batch_size": 16, "local_epochs": 1},
@@ -170,7 +193,6 @@ def init_comet_experiment(args: argparse.Namespace):
 def main() -> None:
     # Parse command line argument `partition`
     utils.set_seed(42)
-    
     args = init_argurments()
     experiment = init_comet_experiment(args)
 
@@ -181,17 +203,19 @@ def main() -> None:
         # trainset, testset = utils.load_partition(args.index)
         
         pascal_voc_partition = PascalVocPartition(args)
-        trainset, testset = pascal_voc_partition.load_partition(args.index)
+        trainset, testset, publicset = pascal_voc_partition.load_partition(args.index)
         
         if args.toy:
             trainset = torch.utils.data.Subset(trainset, range(10))
             testset = torch.utils.data.Subset(testset, range(10))
+            publicset = torch.utils.data.Subset(publicset, range(10))
 
         # Start Flower client
-        client = CustomClient(trainset, testset, 0.1, experiment, args)
+        client = CustomDistillClient(trainset, testset, 0.1, experiment, args)
         fl.client.start_numpy_client(server_address=f"0.0.0.0:{args.port}", client=client)
 
-    experiment.end()
+    if experiment is not None:
+        experiment.end()
 
 if __name__ == "__main__":
     main()

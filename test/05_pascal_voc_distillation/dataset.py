@@ -63,32 +63,55 @@ class PascalVocPartition:
         self.path = pathlib.Path.home().joinpath('.data', 'PASCAL_VOC_2012', f'N_clients_{args.N_parties}_alpha_{args.alpha:.1f}')
     
     def load_partition(self, i: int):
+        train_dataset = self.load_train_datset(i)
+        test_dataset = self.load_test_datset(i)
+        public_dataset = self.load_public_dataset()
+        return train_dataset, test_dataset, public_dataset
+    
+    def load_train_datset(self, i: int):
         path = pathlib.Path.home().joinpath('.data', 'PASCAL_VOC_2012')
         if i == -1:
             party_img = np.load(path.joinpath('PASCAL_VOC_train_224_Img.npy'))
             party_label = np.load(path.joinpath('PASCAL_VOC_train_224_Label.npy'))
             party_img, party_label = self.filter_images_by_label_type(self.args.task, party_img, party_label)
             train_dataset = mydataset(party_img, party_label)
-            
-            test_imgs = np.load(path.joinpath('PASCAL_VOC_val_224_Img.npy'))
-            test_labels = np.load(path.joinpath('PASCAL_VOC_val_224_Label.npy'))
-            test_imgs, test_labels = self.filter_images_by_label_type(self.args.task, test_imgs, test_labels)
-            test_partition = mydataset(test_imgs, test_labels)
         else :
             party_img = np.load(self.path.joinpath(f'Party_{i}_X_data.npy'))
             party_label = np.load(self.path.joinpath(f'Party_{i}_y_data.npy'))
             party_img, party_label = self.filter_images_by_label_type(self.args.task, party_img, party_label)
             train_dataset = mydataset(party_img, party_label)
-            
-            test_imgs = np.load(path.joinpath('PASCAL_VOC_val_224_Img.npy'))
-            test_labels = np.load(path.joinpath('PASCAL_VOC_val_224_Label.npy'))
-            test_imgs, test_labels = self.filter_images_by_label_type(self.args.task, test_imgs, test_labels)
+        
+        print(f"client {i}_size of train partition: ", len(train_dataset), "images")
+        return train_dataset
+     
+    def load_test_datset(self, i: int):
+        path = pathlib.Path.home().joinpath('.data', 'PASCAL_VOC_2012')
+        test_imgs = np.load(path.joinpath('PASCAL_VOC_val_224_Img.npy'))
+        test_labels = np.load(path.joinpath('PASCAL_VOC_val_224_Label.npy'))
+        test_imgs, test_labels = self.filter_images_by_label_type(self.args.task, test_imgs, test_labels)
+        if i == -1:
+            test_dataset = mydataset(test_imgs, test_labels)
+        else :
             n_test = int(test_imgs.shape[0] / self.args.N_parties)
             test_dataset = mydataset(test_imgs, test_labels)
-            test_partition = torch.utils.data.Subset(test_dataset, range(i * n_test, (i + 1) * n_test))
-
-        print(f"client {i}_size of train partition: ", len(train_dataset), "images / ", "test partition: ", len(test_partition), "images")
-        return train_dataset, test_partition
+            test_dataset = torch.utils.data.Subset(test_dataset, range(i * n_test, (i + 1) * n_test))
+        print(f"client {i}_size of test partition: ", len(test_dataset), "images")
+        return test_dataset
+    
+    def load_public_dataset(self):
+        path = pathlib.Path.home().joinpath('.data', 'MSCOCO')
+        public_imgs = np.load(path.joinpath('coco_img.npy')).transpose(0, 2, 3, 1)
+        public_imgs = (public_imgs*255.0).round().astype(np.uint8)
+        public_labels = np.load(path.joinpath('coco_label.npy'))
+        # random sampling 1/10 of the data
+        index = np.random.choice(public_imgs.shape[0], int(public_imgs.shape[0]/10), replace=False)
+        public_imgs = public_imgs[index]
+        public_labels = public_labels[index]
+        
+        print("size of public dataset: ", public_imgs.shape, "images")
+        public_imgs, public_labels = self.filter_images_by_label_type(self.args.task, public_imgs, public_labels)
+        public_dataset = mydataset(public_imgs, public_labels, transforms=transformations_train)
+        return public_dataset
     
     def filter_images_by_label_type(self, task: str, imgs: np.ndarray, labels: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         print(f"filtering images by label type: {task}")
@@ -117,20 +140,18 @@ class Test_PascalVocPartition(unittest.TestCase):
         args.batch_size = 16
         print(f"{os.path.basename(__file__)}:{inspect.currentframe().f_lineno}")
         pascal = PascalVocPartition(args)
-        train_dataset, test_parition = pascal.load_partition(0)
-        train_dataset, test_parition = pascal.load_partition(1)
-        train_dataset, test_parition = pascal.load_partition(2)
-        train_dataset, test_parition = pascal.load_partition(3)
-        train_dataset, test_parition = pascal.load_partition(4)
-        train_dataset, test_parition = pascal.load_partition(-1)
-        # self.assertEqual(len(train_dataset), 1000)
-        # self.assertEqual(len(test_parition), 100)
-        valLoader = DataLoader(test_parition, batch_size=args.batch_size)
+        trainset, testset, publicset = pascal.load_partition(0)
+        trainset, testset, publicset = pascal.load_partition(1)
+        trainset, testset, publicset = pascal.load_partition(2)
+        trainset, testset, publicset = pascal.load_partition(3)
+        trainset, testset, publicset = pascal.load_partition(4)
+        trainset, testset, publicset = pascal.load_partition(-1)
+        # self.assertEqual(len(trainset), 1000)
+        # self.assertEqual(len(testset), 100)
+        valLoader = DataLoader(testset, batch_size=args.batch_size)
         img, label = next(iter(valLoader))
         print(label.shape)
         print(label)
-    
-
 
 if __name__ == '__main__':
     unittest.main()

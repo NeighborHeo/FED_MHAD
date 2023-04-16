@@ -12,31 +12,42 @@ from model import vit_tiny_patch16_224
 from dataset import PascalVocPartition
 from early_stopper import EarlyStopper
 
+import os
+from dotenv import load_dotenv
+# __file__
+load_dotenv(os.path.dirname(os.path.abspath(__file__)).joinpath('.env_comet'))
+
 warnings.filterwarnings("ignore")
 
 from comet_ml import Experiment
 # from comet_ml.integration.pytorch import log_model
+
+# inline(lambda) 함수 
+# print(f"{os.path.basename(__file__)}:{inspect.currentframe().f_lineno}")
 
 class CustomDistillClient(fl.client.NumPyClient):
     def __init__(
         self,
         trainset: torchvision.datasets,
         testset: torchvision.datasets,
+        publicset: torchvision.datasets,
         validation_split: int = 0.1,
         experiment: Optional[Experiment] = None,
         args: Optional[argparse.Namespace] = None,
     ):
+        utils.print_func_and_line()
         self.trainset = trainset
         self.testset = testset
+        self.publicset = publicset
         self.validation_split = validation_split
         self.experiment = experiment
         self.args = args
-        self.save_path = f"checkpoints/{args.port}_client_{args.index}_best_models"
-        self.early_stopper = EarlyStopper(patience=5, delta=1e-4, checkpoint_dir=self.save_path)
+        self.save_path = f"checkpoints/{args.port}/client_{args.index}"
         # todo : for read public dataloader 
         # todo : add local train function
 
     def set_parameters(self, parameters):
+        utils.print_func_and_line()
         """Loads a efficientnet model and replaces it parameters with the ones
         given."""
         model = vit_tiny_patch16_224(pretrained=True, num_classes=self.args.num_classes)
@@ -48,27 +59,36 @@ class CustomDistillClient(fl.client.NumPyClient):
         return model
     
     def local_training(self, model, trainLoader, valLoader, epochs, device, args):
-        # todo : add local training function
+        utils.print_func_and_line()
+        batch_size: int = args.batch_size
+        epochs: int = args.local_epochs
+        server_round: int = args.server_round
         
-        # running_loss = 0.0
-        # for _ in range(local_epoch):
-        #     for data in trainloader:
-        #         _, x, y = data
-        #         x = x.to(self.device)
-        #         y = y.to(self.device).to(torch.int64)
-
-        #         optimizer.zero_grad()
-        #         loss = criterion(self(x), y)
-        #         loss.backward()
-        #         optimizer.step()
-
-        #         running_loss += loss.item()
-
-        # return running_loss
-
-        pass
+        trainLoader = DataLoader(self.trainset, batch_size=batch_size, shuffle=True)
+        valLoader = DataLoader(self.testset, batch_size=batch_size)
+        
+        device = torch.device("cuda:0" if torch.cuda.is_available() and args.use_cuda else "cpu")
+        early_stopper = EarlyStopper(patience=20, delta=1e-4, checkpoint_dir=self.save_path)
+         
+        for epoch in range(epochs):
+            print(f"Epoch {epoch + 1} / {epochs}")
+            print("-" * len(f"Epoch {epoch + 1} / {epochs}"))
+            result = utils.train(model, trainLoader, valLoader, epochs=1, device=device, args=args)
+            
+            if early_stopper.is_best_accuracy(result["val_accuracy"]):
+                filename = f"model_round{server_round}_epoch{epochs}_acc{result['val_accuracy']:.4f}_loss{result['val_loss']:.4f}.pth"
+                early_stopper.save_checkpoint(model, server_round, result["val_loss"], result["val_accuracy"], filename)
+            
+            if self.experiment is not None:
+                result_local = {f"local_{k}": v for k, v in result.items}
+                self.experiment.log_metrics(result_local, step=epoch)
+                
+            if early_stopper.counter >= early_stopper.patience:
+                print(f"Early stopping : {early_stopper.counter} >= {early_stopper.patience}")
+                break
 
     def fit(self, parameters, config):
+        utils.print_func_and_line()
         """Train parameters on the locally held training set."""
 
         # Update local model parameters
@@ -113,6 +133,7 @@ class CustomDistillClient(fl.client.NumPyClient):
         return parameters_prime, num_examples_train, results
 
     def evaluate(self, parameters, config):
+        utils.print_func_and_line()
         """Evaluate parameters on the locally held test set."""
         # Update local model parameters
         model = self.set_parameters(parameters)
@@ -135,6 +156,7 @@ class CustomDistillClient(fl.client.NumPyClient):
 
 def client_dry_run(experiment: Optional[Experiment] = None
                    , args: Optional[argparse.Namespace] = None) -> None:
+    utils.print_func_and_line()
     """Weak tests to check whether all client methods are working as
     expected."""
     
@@ -149,20 +171,20 @@ def client_dry_run(experiment: Optional[Experiment] = None
         utils.get_model_params(model),
         {"batch_size": 16, "local_epochs": 1},
     )
-
     client.evaluate(utils.get_model_params(model), {"val_steps": 32})
     print("Dry Run Successful")
 
 def init_argurments():
+    utils.print_func_and_line()
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Start Flower server with experiment key.")
-    parser.add_argument("--index", type=int, required=True, help="Index of the client")
-    parser.add_argument("--experiment_key", type=str, required=True, help="Experiment key")
+    parser.add_argument("--index", type=int, default=0, required=False, help="Index of the client")
+    parser.add_argument("--experiment_key", type=str, default="test", required=False, help="Experiment key")
     parser.add_argument("--toy", type=bool, default=False, required=False, help="Set to true to use only 10 datasamples for validation. Useful for testing purposes. Default: False" )
     parser.add_argument("--use_cuda", type=bool, default=True, required=False, help="Set to true to use GPU. Default: False" )
     parser.add_argument("--partition", type=int, default=0, choices=range(0, 10), required=False, help="Specifies the artificial data partition of CIFAR10 to be used. Picks partition 0 by default" )
     parser.add_argument("--dry", type=bool, default=False, required=False, help="Set to true to use only 10 datasamples for validation. Useful for testing purposes. Default: False" )
-    parser.add_argument("--port", type=int, default=8080, required=False, help="Port to use for the server. Default: 8080")
+    parser.add_argument('--port', type=int, default=8080, required=False, help='Port to use for the server. Default: 8080')
     parser.add_argument("--learning_rate", type=float, default=0.00002, required=False, help="Learning rate. Default: 0.1")
     parser.add_argument("--momentum", type=float, default=0.9, required=False, help="Momentum. Default: 0.9")
     parser.add_argument("--weight_decay", type=float, default=1e-4, required=False, help="Weight decay. Default: 1e-4")
@@ -181,10 +203,15 @@ def init_argurments():
     return args
 
 def init_comet_experiment(args: argparse.Namespace):
+    utils.print_func_and_line()
+    print("api_key:", os.getenv('COMET_API_TOKEN'))
+    print("project_name:", os.getenv('COMET_PROJECT_NAME'))
+    print("workspace:", os.getenv('COMET_WORKSPACE'))
+    
     experiment = Experiment(
-        api_key = "3JenmgUXXmWcKcoRk8Yra0XcD",
-        project_name = "benchmark_fedavg_multilabel",
-        workspace="neighborheo"
+        api_key = os.getenv('COMET_API_TOKEN'),
+        project_name = os.getenv('COMET_PROJECT_NAME'),
+        workspace= os.getenv('COMET_WORKSPACE'),
     )
     experiment.log_parameters(args)
     experiment.set_name(f"client_{args.index}_({args.port})_lr_{args.learning_rate}_bs_{args.batch_size}")
@@ -192,6 +219,7 @@ def init_comet_experiment(args: argparse.Namespace):
 
 def main() -> None:
     # Parse command line argument `partition`
+    utils.print_func_and_line()
     utils.set_seed(42)
     args = init_argurments()
     experiment = init_comet_experiment(args)

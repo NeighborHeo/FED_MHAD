@@ -15,6 +15,9 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import os
+from dotenv import load_dotenv
+# __file__
+load_dotenv(os.path.dirname(os.path.abspath(__file__)).joinpath('.env_comet'))
 
 from comet_ml import Experiment
 # from comet_ml.integration.pytorch import log_model
@@ -23,7 +26,7 @@ class CustomServer:
     def __init__(self, model: torch.nn.Module, args: argparse.Namespace, experiment: Optional[Experiment] = None):
         self.experiment = experiment
         self.args = args  # add this line to save args as an instance attribute
-        self.save_path = f"checkpoints/{args.port}_server_best_models"
+        self.save_path = f"checkpoints/{args.port}/global"
         self.early_stopper = EarlyStopper(patience=5, delta=1e-4, checkpoint_dir=self.save_path)
         self.strategy = self.create_strategy(model, args.toy)
         
@@ -131,9 +134,9 @@ def init_argurments() -> argparse.Namespace:
         
 def init_comet_experiment(args: argparse.Namespace):
     experiment = Experiment(
-        api_key = "3JenmgUXXmWcKcoRk8Yra0XcD",
-        project_name = "benchmark_fedavg_multilabel",
-        workspace="neighborheo"
+        api_key = os.getenv('COMET_API_TOKEN'),
+        project_name = os.getenv('COMET_PROJECT_NAME'),
+        workspace= os.getenv('COMET_WORKSPACE'),
     )
     experiment.log_parameters(args)
     experiment.set_name(f"global_({args.port})_lr_{args.learning_rate}_bs_{args.batch_size}_rd_{args.num_rounds}")

@@ -13,6 +13,9 @@ warnings.filterwarnings("ignore")
 
 # DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+# print_file_and_line = lambda: print(f"file : {os.path.basename(inspect.stack()[1][1])} / line : {inspect.stack()[1][2]}")
+print_func_and_line = lambda: print(f"{os.path.basename(inspect.stack()[1].filename)}::{inspect.stack()[1].function}:{inspect.stack()[1].lineno}")
+
 def set_seed(seed):
     torch.manual_seed(0)
     torch.cuda.manual_seed(0)

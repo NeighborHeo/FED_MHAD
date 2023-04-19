@@ -25,7 +25,6 @@ def set_seed(seed):
     np.random.seed(0)
     
 def load_data():
-    
     """Load CIFAR-10 (training and test set)."""
     transform = transforms.Compose(
         [
@@ -58,11 +57,12 @@ def load_partition(idx: int):
     return (train_parition, test_parition)
 
 def train(net, trainloader, valloader, epochs, device: str = "cpu", args=None):
+    print_func_and_line()
     """Train the network on the training set."""
     print("Starting training...")
     
     net.to(device)  # move model to GPU if available
-    if args == 'singlelabel' : 
+    if args.task == 'singlelabel' : 
         criterion = torch.nn.CrossEntropyLoss().to(device)
     else:
         criterion = torch.nn.MultiLabelSoftMarginLoss().to(device)
@@ -83,7 +83,7 @@ def train(net, trainloader, valloader, epochs, device: str = "cpu", args=None):
         for images, labels in tqdm(trainloader):
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
-            if args == 'singlelabel' : 
+            if args.task == 'singlelabel' : 
                 loss = criterion(net(images), labels)
             else:
                 loss = criterion(net(images), labels.float())
@@ -102,10 +102,11 @@ def train(net, trainloader, valloader, epochs, device: str = "cpu", args=None):
     return results
 
 def test(net, testloader, steps: int = None, device: str = "cpu", args=None):
+    print_func_and_line()
     """Validate the network on the entire test set."""
     print("Starting evalutation...")
     net.to(device)  # move model to GPU if available
-    if args == 'singlelabel' : 
+    if args.task == 'singlelabel' : 
         criterion = torch.nn.CrossEntropyLoss().to(device)
     else:
         criterion = torch.nn.MultiLabelSoftMarginLoss().to(device)
@@ -123,12 +124,12 @@ def test(net, testloader, steps: int = None, device: str = "cpu", args=None):
             output_list.append(m(outputs).cpu().numpy())
             target_list.append(targets.cpu().numpy())
             
-            if args == 'singlelabel' :
+            if args.task == 'singlelabel' :
                 loss += criterion(outputs, targets).item()
             else:
                 loss += criterion(outputs, targets.float()).item()
             total += outputs.size(0)
-            if args == 'singlelabel' :
+            if args.task == 'singlelabel' :
                 _, predicted = torch.max(outputs.data, axis=1)
                 correct += predicted.eq(targets).sum().item()
             else:
@@ -187,6 +188,66 @@ def load_efficientnet(entrypoint: str = "nvidia_efficientnet_b0", classes: int =
 def get_model_params(model):
     """Returns a model's parameters."""
     return [val.cpu().numpy() for _, val in model.state_dict().items()]
+
+def get_model_output(model, public_loader, device: str = "cpu"):
+    """Returns a model's output on the public_loader."""
+    model.to(device)
+    model.eval()
+    m = torch.nn.Sigmoid()
+    outputs = []
+    with torch.no_grad():
+        for images, _ in public_loader:
+            images = images.to(device)
+             # move the model to the same device as the input tensor
+            outputs.append(m(model(images)).cpu().numpy())
+    outputs = np.concatenate(outputs)
+    return outputs
+
+def train_for_distill(net, public_loader, valloader, epochs, ensemble_outputs, device: str = "cpu", args=None):
+    print_func_and_line()
+    """Train the network on the training set."""
+    print("Starting training...")
+    
+    net.to(device)  # move model to GPU if available
+    if args.task == 'singlelabel' : 
+        criterion = torch.nn.CrossEntropyLoss().to(device)
+    else:
+        criterion = torch.nn.MultiLabelSoftMarginLoss().to(device)
+    
+    last_layer_name = list(net.named_children())[-1][0]
+    parameters = [
+        {'params': [p for n, p in net.named_parameters() if last_layer_name not in n], 'lr': args.learning_rate},
+        {'params': [p for n, p in net.named_parameters() if last_layer_name in n], 'lr': args.learning_rate*10},
+    ]
+    # if args.optim == 'SGD':
+    optimizer = torch.optim.SGD( params= parameters, lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay)
+    # else:    
+        # optimizer = torch.optim.Adam( params= parameters, lr=args.learning_rate, betas=(args.momentum, 0.999), weight_decay=args.weight_decay)
+    # slice ensemble outputs per batch size
+    ensemble_outputs = ensemble_outputs.reshape(public_loader.batch_size, -1, ensemble_outputs.shape[-1])
+    net.train()
+    for i in range(epochs):
+        print("Epoch: ", i)
+        for i, (images, _) in enumerate(public_loader):
+            images = images.to(device)
+            labels = torch.from_numpy(ensemble_outputs[i]).to(device)
+            optimizer.zero_grad()
+            if args.task == 'singlelabel' : 
+                loss = criterion(net(images), labels)
+            else:
+                loss = criterion(net(images), labels.float())
+            loss.backward()
+            optimizer.step()
+
+    net.to("cpu")  # move model back to CPU
+    # train_loss, train_acc = test(net, public_loader)
+    results1 = test(net, public_loader, args=args)
+    results1 = {f"train_{k}": v for k, v in results1.items()}
+    # val_loss, val_acc = test(net, valloader)
+    results2 = test(net, valloader, args=args)
+    results2 = {f"val_{k}": v for k, v in results2.items()}
+    results = {**results1, **results2}
+    return results
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,3 +1,4 @@
+import numpy as np
 from typing import Dict, Optional, Tuple
 from collections import OrderedDict
 import argparse
@@ -10,27 +11,31 @@ import utils
 from dataset import PascalVocPartition
 from model import vit_tiny_patch16_224
 from early_stopper import EarlyStopper
+from fedmhad import FedMHAD
+from copy import deepcopy
 
 import warnings
 warnings.filterwarnings("ignore")
 
 import os
 from dotenv import load_dotenv
-# __file__
-load_dotenv(os.path.dirname(os.path.abspath(__file__)).joinpath('.env_comet'))
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env_comet'))
 
 from comet_ml import Experiment
 # from comet_ml.integration.pytorch import log_model
 
-class CustomServer:
+class CustomServerManager:
     def __init__(self, model: torch.nn.Module, args: argparse.Namespace, experiment: Optional[Experiment] = None):
+        utils.print_func_and_line()
         self.experiment = experiment
         self.args = args  # add this line to save args as an instance attribute
         self.save_path = f"checkpoints/{args.port}/global"
         self.early_stopper = EarlyStopper(patience=5, delta=1e-4, checkpoint_dir=self.save_path)
         self.strategy = self.create_strategy(model, args.toy)
+        self.global_model = deepcopy(model)
         
     def fit_config(self, server_round: int) -> Dict[str, int]:
+        utils.print_func_and_line()
         return {
             "server_round": server_round,
             "batch_size": 16,
@@ -38,13 +43,15 @@ class CustomServer:
         }
 
     def evaluate_config(self, server_round: int) -> Dict[str, int]:
+        utils.print_func_and_line()
         val_steps = 5 if server_round < 4 else 10
         return {
             "val_steps": val_steps, 
             "server_round": server_round
         }
 
-    def get_evaluate_fn(self, model: torch.nn.Module, toy: bool):
+    def __get_evaluate_fn(self, model: torch.nn.Module, toy: bool):
+        utils.print_func_and_line()
         # trainset, _, _ = utils.load_data()
         pascal_voc_partition = PascalVocPartition(args=self.args)
         trainset, testset, publicset = pascal_voc_partition.load_partition(-1)
@@ -52,57 +59,66 @@ class CustomServer:
         print(f"n_train: {n_train}")
         if toy:
             valset = torch.utils.data.Subset(testset, range(n_train - 10, n_train))
+            publicset = torch.utils.data.Subset(publicset, range(0, 10))
         else:
             valset = torch.utils.data.Subset(testset, range(0, n_train))
 
         valLoader = DataLoader(valset, batch_size=self.args.batch_size)
+        publicLoader = DataLoader(publicset, batch_size=self.args.batch_size, shuffle=False)
 
         def evaluate(
             server_round: int,
             parameters: fl.common.NDArrays,
             config: Dict[str, fl.common.Scalar],
         ) -> Optional[Tuple[float, Dict[str, fl.common.Scalar]]]:
-            state_dict = OrderedDict({k: torch.tensor(v) for k, v in zip(model.state_dict().keys(), parameters)})
-            model.load_state_dict(state_dict, strict=True)
-
+            utils.print_func_and_line()
+            print(f"server_round: {server_round}")
+            if server_round == 0 or server_round == 1:
+                return None
+            # state_dict = OrderedDict({k: torch.tensor(v) for k, v in zip(model.state_dict().keys(), parameters)})
+            # model.load_state_dict(state_dict, strict=True)
+            ensemble_outputs = parameters
+            # print(f"ensemble_outputs shape:", len(ensemble_outputs), ensemble_outputs[0].shape)
             device = torch.device("cuda:0" if torch.cuda.is_available() and self.args.use_cuda else "cpu")
-            result = utils.test(model, valLoader, device=device)
-            accuracy = result["acc"]
-            loss = result["loss"]
+            # 앙상블된 출력을 이용하여 지식증류를 통한 모델 학습
+            # result = utils.train_for_distill(model, publicLoader, valLoader, 30, ensemble_outputs, device, self.args)
+            # accuracy = result["val_acc"]
+            # loss = result["val_loss"]
             
-            is_best_accuracy = self.early_stopper.is_best_accuracy(accuracy)
-            if is_best_accuracy:
-                filename = f"model_round{server_round}_acc{accuracy:.2f}_loss{loss:.2f}.pth"
-                self.early_stopper.save_checkpoint(model, server_round, loss, accuracy, filename)
+            # is_best_accuracy = self.early_stopper.is_best_accuracy(accuracy)
+            # if is_best_accuracy:
+            #     filename = f"model_round{server_round}_acc{accuracy:.2f}_loss{loss:.2f}.pth"
+            #     self.early_stopper.save_checkpoint(model, server_round, loss, accuracy, filename)
 
-            if self.early_stopper.counter >= self.early_stopper.patience:
-                print(f"Early stopping : {self.early_stopper.counter} >= {self.early_stopper.patience}")
-                # todo : stop server
+            # if self.early_stopper.counter >= self.early_stopper.patience:
+            #     print(f"Early stopping : {self.early_stopper.counter} >= {self.early_stopper.patience}")
+            #     # todo : stop server
                 
-            if self.experiment is not None:
-                result = {f"test_" + k: v for k, v in result.items()}
-                self.experiment.log_metrics(result, step=server_round)
+            # if self.experiment is not None:
+            #     result = {k.replace("val_", "test_"): v for k, v in result.items()}
+            #     self.experiment.log_metrics(result, step=server_round)
                 
-            return float(loss), {"accuracy": float(accuracy)}
+            # return float(loss), {"accuracy": float(accuracy)}
 
         return evaluate
     
     def create_strategy(self, model: torch.nn.Module, toy: bool):
-        model_parameters = [val.cpu().numpy() for _, val in model.state_dict().items()]
+        utils.print_func_and_line()
         print("create_strategy")
-        return fl.server.strategy.FedAvg(
+        return FedMHAD(
             fraction_fit=1,
             fraction_evaluate=1,
-            min_fit_clients=5,
-            min_evaluate_clients=5,
-            min_available_clients=5,
-            evaluate_fn=self.get_evaluate_fn(model, toy),
+            min_fit_clients=2,
+            min_evaluate_clients=2,
+            min_available_clients=2,
+            evaluate_fn=self.__get_evaluate_fn(model, toy),
             on_fit_config_fn=self.fit_config,
             on_evaluate_config_fn=self.evaluate_config,
-            initial_parameters=fl.common.ndarrays_to_parameters(model_parameters),
+            initial_parameters=None,
         )
 
     def start_server(self, port: int, num_rounds: int):
+        utils.print_func_and_line()
         fl.server.start_server(
             server_address=f"0.0.0.0:{port}",
             config=fl.server.ServerConfig(num_rounds=num_rounds),
@@ -155,7 +171,7 @@ def main() -> None:
 
     # Load model
     model = vit_tiny_patch16_224(pretrained=True, num_classes=args.num_classes)
-    custom_server = CustomServer(model, args, experiment)
+    custom_server = CustomServerManager(model, args, experiment)
     custom_server.start_server(args.port, args.num_rounds)
     
     if experiment is not None:

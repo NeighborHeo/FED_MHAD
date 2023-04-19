@@ -100,17 +100,25 @@ class PascalVocPartition:
     
     def load_public_dataset(self):
         path = pathlib.Path.home().joinpath('.data', 'MSCOCO')
-        public_imgs = np.load(path.joinpath('coco_img.npy')).transpose(0, 2, 3, 1)
-        public_imgs = (public_imgs*255.0).round().astype(np.uint8)
-        public_labels = np.load(path.joinpath('coco_label.npy'))
+        if not path.joinpath('coco_img_1_10.npy').exists():
+            public_imgs = np.load(path.joinpath('coco_img.npy'))
+            public_labels = np.load(path.joinpath('coco_label.npy'))
+            index = np.random.choice(public_imgs.shape[0], int(public_imgs.shape[0]/10), replace=False)
+            public_imgs = public_imgs[index]
+            public_labels = public_labels[index]
+            np.save(path.joinpath('coco_img_1_10.npy'), public_imgs)
+            np.save(path.joinpath('coco_label_1_10.npy'), public_labels)
+        else :
+            public_imgs = np.load(path.joinpath('coco_img_1_10.npy'))
+            public_labels = np.load(path.joinpath('coco_label_1_10.npy'))
         # random sampling 1/10 of the data
-        index = np.random.choice(public_imgs.shape[0], int(public_imgs.shape[0]/10), replace=False)
-        public_imgs = public_imgs[index]
-        public_labels = public_labels[index]
-        
+        # public_imgs = (public_imgs.transpose(0, 2, 3, 1)*255.0).round().astype(np.uint8)
+        # print("size of public dataset: ", public_imgs.shape, "images")
+        # public_imgs, public_labels = self.filter_images_by_label_type(self.args.task, public_imgs, public_labels)
+        # public_dataset = mydataset(public_imgs, public_labels, transforms=transformations_train)
         print("size of public dataset: ", public_imgs.shape, "images")
         public_imgs, public_labels = self.filter_images_by_label_type(self.args.task, public_imgs, public_labels)
-        public_dataset = mydataset(public_imgs, public_labels, transforms=transformations_train)
+        public_dataset = mydataset(public_imgs, public_labels)
         return public_dataset
     
     def filter_images_by_label_type(self, task: str, imgs: np.ndarray, labels: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -141,11 +149,14 @@ class Test_PascalVocPartition(unittest.TestCase):
         print(f"{os.path.basename(__file__)}:{inspect.currentframe().f_lineno}")
         pascal = PascalVocPartition(args)
         trainset, testset, publicset = pascal.load_partition(0)
-        trainset, testset, publicset = pascal.load_partition(1)
-        trainset, testset, publicset = pascal.load_partition(2)
-        trainset, testset, publicset = pascal.load_partition(3)
-        trainset, testset, publicset = pascal.load_partition(4)
-        trainset, testset, publicset = pascal.load_partition(-1)
+        count_of_labels = np.sum(trainset.get_labels(), axis=0)
+        print("countoflabels : ", count_of_labels)
+        
+        # trainset, testset, publicset = pascal.load_partition(1)
+        # trainset, testset, publicset = pascal.load_partition(2)
+        # trainset, testset, publicset = pascal.load_partition(3)
+        # trainset, testset, publicset = pascal.load_partition(4)
+        # trainset, testset, publicset = pascal.load_partition(-1)
         # self.assertEqual(len(trainset), 1000)
         # self.assertEqual(len(testset), 100)
         valLoader = DataLoader(testset, batch_size=args.batch_size)

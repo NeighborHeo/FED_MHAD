@@ -1,6 +1,12 @@
 #!/bin/bash
 set -e
+
+# Set the script directory as the working directory
 cd "$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"/
+
+# Set the script directory to the Python path
+SCRIPT_DIR="$(pwd)"
+export PYTHONPATH="$PYTHONPATH:$SCRIPT_DIR"
 
 # Generate a random experiment key (characters and numbers only 48 characters long)
 experiment_key=$(openssl rand -base64 48 | sed 's/[^a-zA-Z0-9]//g')

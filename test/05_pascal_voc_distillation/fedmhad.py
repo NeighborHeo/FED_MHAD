@@ -20,6 +20,7 @@
 from logging import WARNING
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
+import utils
 from flwr.common import (
     EvaluateIns,
     EvaluateRes,
@@ -46,6 +47,11 @@ connected to the server. `min_available_clients` must be set to a value larger
 than or equal to the values of `min_fit_clients` and `min_evaluate_clients`.
 """
 
+def aggregate_outputs(
+    ndarrays_list: List[NDArrays], weights: List[int]
+) -> NDArrays:
+    """Aggregate parameters."""
+    return aggregate(ndarrays_list, weights, weighted_loss_avg)
 
 # flake8: noqa: E501
 class FedMHAD(Strategy):
@@ -109,7 +115,7 @@ class FedMHAD(Strategy):
             Metrics aggregation function, optional.
         """
         super().__init__()
-
+        utils.print_func_and_line()
         if (
             min_fit_clients > min_available_clients
             or min_evaluate_clients > min_available_clients
@@ -133,13 +139,15 @@ class FedMHAD(Strategy):
         rep = f"FedMHAD(accept_failures={self.accept_failures})"
         return rep
 
-    def num_fit_clients(self, num_available_clients: int) -> Tuple[int, int]:
+    def __num_fit_clients(self, num_available_clients: int) -> Tuple[int, int]:
+        utils.print_func_and_line()
         """Return the sample size and the required number of available
         clients."""
         num_clients = int(num_available_clients * self.fraction_fit)
         return max(num_clients, self.min_fit_clients), self.min_available_clients
 
     def num_evaluation_clients(self, num_available_clients: int) -> Tuple[int, int]:
+        utils.print_func_and_line()
         """Use a fraction of available clients for evaluation."""
         num_clients = int(num_available_clients * self.fraction_evaluate)
         return max(num_clients, self.min_evaluate_clients), self.min_available_clients
@@ -147,6 +155,7 @@ class FedMHAD(Strategy):
     def initialize_parameters(
         self, client_manager: ClientManager
     ) -> Optional[Parameters]:
+        utils.print_func_and_line()
         """Initialize global model parameters."""
         initial_parameters = self.initial_parameters
         self.initial_parameters = None  # Don't keep initial parameters in memory
@@ -155,6 +164,7 @@ class FedMHAD(Strategy):
     def evaluate(
         self, server_round: int, parameters: Parameters
     ) -> Optional[Tuple[float, Dict[str, Scalar]]]:
+        utils.print_func_and_line()
         """Evaluate model parameters using an evaluation function."""
         if self.evaluate_fn is None:
             # No evaluation function provided
@@ -166,18 +176,22 @@ class FedMHAD(Strategy):
         loss, metrics = eval_res
         return loss, metrics
 
+    # 모든 클라이언트에게 파라미터를 보내고, 각 클라이언트에서 파라미터를 업데이트 한다.
     def configure_fit(
         self, server_round: int, parameters: Parameters, client_manager: ClientManager
     ) -> List[Tuple[ClientProxy, FitIns]]:
+        utils.print_func_and_line()
         """Configure the next round of training."""
         config = {}
         if self.on_fit_config_fn is not None:
             # Custom fit config function provided
             config = self.on_fit_config_fn(server_round)
+
+        # Parameters and config
         fit_ins = FitIns(parameters, config)
 
         # Sample clients
-        sample_size, min_num_clients = self.num_fit_clients(
+        sample_size, min_num_clients = self.__num_fit_clients(
             client_manager.num_available()
         )
         clients = client_manager.sample(
@@ -187,10 +201,12 @@ class FedMHAD(Strategy):
         # Return client/config pairs
         return [(client, fit_ins) for client in clients]
 
+    # 모든 클라이언트에게 파라미터를 보내고, 각 클라이언트에서 파라미터를 업데이트 한다.
     def configure_evaluate(
         self, server_round: int, parameters: Parameters, client_manager: ClientManager
     ) -> List[Tuple[ClientProxy, EvaluateIns]]:
         """Configure the next round of evaluation."""
+        utils.print_func_and_line()
         # Do not configure federated evaluation if fraction eval is 0.
         if self.fraction_evaluate == 0.0:
             return []
@@ -213,12 +229,14 @@ class FedMHAD(Strategy):
         # Return client/config pairs
         return [(client, evaluate_ins) for client in clients]
 
+    # 모든 클라이언트가 모델을 업데이트 한 후에 모델을 평가하는 방법
     def aggregate_fit(
         self,
         server_round: int,
         results: List[Tuple[ClientProxy, FitRes]],
         failures: List[Union[Tuple[ClientProxy, FitRes], BaseException]],
     ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
+        utils.print_func_and_line()
         """Aggregate fit results using weighted average."""
         if not results:
             return None, {}
@@ -226,23 +244,41 @@ class FedMHAD(Strategy):
         if not self.accept_failures and failures:
             return None, {}
 
-        # Convert results
-        weights_results = [
-            (parameters_to_ndarrays(fit_res.parameters), fit_res.num_examples)
-            for _, fit_res in results
-        ]
-        parameters_aggregated = ndarrays_to_parameters(aggregate(weights_results))
+        for client, fit_res in results:
+            if fit_res.parameters is None:
+                raise ValueError(
+                    f"Client {client} returned no parameters in round {server_round}"
+                )
+            if fit_res.num_examples is None:
+                raise ValueError(
+                    f"Client {client} returned no num_examples in round {server_round}"
+                )
+            print(f"Client {client} returned {fit_res.num_examples} examples in round {server_round}")
+        
+        # @todo : 여기서 모든 클라이언트의 파라미터를 평균내서 리턴해야 한다.
+        
+        # # Convert results
+        # weights_results = [
+        #     (parameters_to_ndarrays(fit_res.parameters), fit_res.num_examples)
+        #     for _, fit_res in results
+        # ]
+        # parameters_aggregated = ndarrays_to_parameters(aggregate(weights_results))
 
-        # Aggregate custom metrics if aggregation fn was provided
-        metrics_aggregated = {}
-        if self.fit_metrics_aggregation_fn:
-            fit_metrics = [(res.num_examples, res.metrics) for _, res in results]
-            metrics_aggregated = self.fit_metrics_aggregation_fn(fit_metrics)
-        elif server_round == 1:  # Only log this warning once
-            log(WARNING, "No fit_metrics_aggregation_fn provided")
+        # # Aggregate custom metrics if aggregation fn was provided
+        # metrics_aggregated = {}
+        # if self.fit_metrics_aggregation_fn:
+        #     fit_metrics = [(res.num_examples, res.metrics) for _, res in results]
+        #     metrics_aggregated = self.fit_metrics_aggregation_fn(fit_metrics)
+        # elif server_round == 1:  # Only log this warning once
+        #     log(WARNING, "No fit_metrics_aggregation_fn provided")
 
-        return parameters_aggregated, metrics_aggregated
+        # return parameters_aggregated, metrics_aggregated
+        
+        # temp
+        client, fit_res = results[0]
+        return ndarrays_to_parameters(fit_res.parameters), {}
 
+    # 모든 클라이언트의 평가 결과를 받는 함수
     def aggregate_evaluate(
         self,
         server_round: int,
@@ -250,6 +286,7 @@ class FedMHAD(Strategy):
         failures: List[Union[Tuple[ClientProxy, EvaluateRes], BaseException]],
     ) -> Tuple[Optional[float], Dict[str, Scalar]]:
         """Aggregate evaluation losses using weighted average."""
+        utils.print_func_and_line()
         if not results:
             return None, {}
         # Do not aggregate if there are failures and failures are not accepted

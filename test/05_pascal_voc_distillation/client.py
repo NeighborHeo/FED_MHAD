@@ -1,3 +1,7 @@
+import os
+import sys
+
+import numpy as np
 from torch.utils.data import DataLoader
 import torchvision.datasets
 import torch
@@ -12,10 +16,8 @@ from model import vit_tiny_patch16_224
 from dataset import PascalVocPartition
 from early_stopper import EarlyStopper
 
-import os
 from dotenv import load_dotenv
-# __file__
-load_dotenv(os.path.dirname(os.path.abspath(__file__)).joinpath('.env_comet'))
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env_comet'))
 
 warnings.filterwarnings("ignore")
 
@@ -43,22 +45,12 @@ class CustomDistillClient(fl.client.NumPyClient):
         self.experiment = experiment
         self.args = args
         self.save_path = f"checkpoints/{args.port}/client_{args.index}"
+        self.early_stopper = EarlyStopper(patience=20, delta=1e-4, checkpoint_dir=self.save_path)
+        self.model = vit_tiny_patch16_224(pretrained=True, num_classes=self.args.num_classes)
         # todo : for read public dataloader 
         # todo : add local train function
-
-    def set_parameters(self, parameters):
-        utils.print_func_and_line()
-        """Loads a efficientnet model and replaces it parameters with the ones
-        given."""
-        model = vit_tiny_patch16_224(pretrained=True, num_classes=self.args.num_classes)
-        params_dict = zip(model.state_dict().keys(), parameters)
-        state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
-        # save file 
-        model.load_state_dict(state_dict, strict=True)
-        
-        return model
     
-    def local_training(self, model, trainLoader, valLoader, epochs, device, args):
+    def __local_training(self, model, trainLoader, valLoader, epochs, device, args):
         utils.print_func_and_line()
         batch_size: int = args.batch_size
         epochs: int = args.local_epochs
@@ -73,11 +65,11 @@ class CustomDistillClient(fl.client.NumPyClient):
         for epoch in range(epochs):
             print(f"Epoch {epoch + 1} / {epochs}")
             print("-" * len(f"Epoch {epoch + 1} / {epochs}"))
-            result = utils.train(model, trainLoader, valLoader, epochs=1, device=device, args=args)
+            result = utils.train(self.model, trainLoader, valLoader, epochs=1, device=device, args=args)
             
             if early_stopper.is_best_accuracy(result["val_accuracy"]):
                 filename = f"model_round{server_round}_epoch{epochs}_acc{result['val_accuracy']:.4f}_loss{result['val_loss']:.4f}.pth"
-                early_stopper.save_checkpoint(model, server_round, result["val_loss"], result["val_accuracy"], filename)
+                early_stopper.save_checkpoint(self.model, server_round, result["val_loss"], result["val_accuracy"], filename)
             
             if self.experiment is not None:
                 result_local = {f"local_{k}": v for k, v in result.items}
@@ -86,13 +78,53 @@ class CustomDistillClient(fl.client.NumPyClient):
             if early_stopper.counter >= early_stopper.patience:
                 print(f"Early stopping : {early_stopper.counter} >= {early_stopper.patience}")
                 break
+        
+        return model
 
-    def fit(self, parameters, config):
+    def __distill_training(self, model, publicLoader, valLoader, epochs, ensemble_outputs, device, args):
         utils.print_func_and_line()
+        batch_size: int = args.batch_size
+        epochs: int = args.local_epochs
+        server_round: int = args.server_round
+        
+        device = torch.device("cuda:0" if torch.cuda.is_available() and args.use_cuda else "cpu")
+        early_stopper = EarlyStopper(patience=20, delta=1e-4, checkpoint_dir=self.save_path)
+         
+        for epoch in range(epochs):
+            print(f"Epoch {epoch + 1} / {epochs}")
+            print("-" * len(f"Epoch {epoch + 1} / {epochs}"))
+            result = utils.train_for_distill(self.model, publicLoader, valLoader, 1, ensemble_outputs, device=device, args=args)
+            
+            if early_stopper.is_best_accuracy(result["val_accuracy"]):
+                filename = f"model_round{server_round}_epoch{epochs}_acc{result['val_accuracy']:.4f}_loss{result['val_loss']:.4f}.pth"
+                early_stopper.save_checkpoint(self.model, server_round, result["val_loss"], result["val_accuracy"], filename)
+            
+            if self.experiment is not None:
+                result_local = {f"distil_{k}": v for k, v in result.items}
+                self.experiment.log_metrics(result_local, step=epoch)
+                
+            if early_stopper.counter >= early_stopper.patience:
+                print(f"Early stopping : {early_stopper.counter} >= {early_stopper.patience}")
+                break
+        
+        return model
+
+    # 서버로부터 모델 파라미터를 받아서 모델을 학습시키는 함수
+    def fit(self, parameters, config):
+        if parameters is None:
+            print("parameters is None")
+            device = torch.device("cuda:0" if torch.cuda.is_available() and self.args.use_cuda else "cpu")
+            self.__local_training(self.model, self.trainset, self.testset, 200, device, self.args)
+        else:
+            print("parameters is not None")
+            
+        utils.print_func_and_line()
+        # if first round, train local model
+        # if second round, train distill model
         """Train parameters on the locally held training set."""
 
         # Update local model parameters
-        model = self.set_parameters(parameters)
+        # model = self.__set_parameters(parameters)
 
         # Get hyperparameters for this round
         batch_size: int = config["batch_size"]
@@ -100,25 +132,26 @@ class CustomDistillClient(fl.client.NumPyClient):
         server_round: int = config["server_round"]
 
         n_valset = int(len(self.trainset) * self.validation_split)
-        print(f"n_valset: {n_valset}")
-
-        valset = torch.utils.data.Subset(self.trainset, range(0, n_valset))
-        trainset = torch.utils.data.Subset(
-            self.trainset, range(n_valset, len(self.trainset))
-        )
+        valset = torch.utils.data.Subset(self.trainset, range(0, n_valset)) # trainset of 10%
+        trainset = torch.utils.data.Subset(self.trainset, range(n_valset, len(self.trainset))) # trainset of 90%
+        publicset = torch.utils.data.Subset(self.publicset, range(0, len(self.publicset)))
 
         trainLoader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
         valLoader = DataLoader(valset, batch_size=batch_size)
+        publicLoader = DataLoader(publicset, batch_size=batch_size, shuffle=False)
 
         device = torch.device("cuda:0" if torch.cuda.is_available() and self.args.use_cuda else "cpu")
-        results = utils.train(model, trainLoader, valLoader, epochs, device, self.args)
+        utils.print_func_and_line()
+        results = utils.train(self.model, trainLoader, valLoader, epochs, device, self.args)
+        utils.print_func_and_line()
         
         accuracy = results["val_accuracy"]
         loss = results["val_loss"]
+        utils.print_func_and_line()
         is_best_accuracy = self.early_stopper.is_best_accuracy(accuracy)
         if is_best_accuracy:
             filename = f"model_round{server_round}_acc{accuracy:.2f}_loss{loss:.2f}.pth"
-            self.early_stopper.save_checkpoint(model, server_round, loss, accuracy, filename)
+            self.early_stopper.save_checkpoint(self.model, server_round, loss, accuracy, filename)
 
         if self.early_stopper.counter >= self.early_stopper.patience:
             print(f"Early stopping : {self.early_stopper.counter} >= {self.early_stopper.patience}")
@@ -127,16 +160,26 @@ class CustomDistillClient(fl.client.NumPyClient):
         if self.experiment is not None:
             self.experiment.log_metrics(results, step=server_round)
         
-        parameters_prime = utils.get_model_params(model)
-        num_examples_train = len(trainset)
+        utils.print_func_and_line()
+        # parameters_prime = utils.get_model_params(model)
+        # num_examples_train = len(trainset)
+        outputs = utils.get_model_output(self.model, publicLoader, device)
+        utils.print_func_and_line()
+        print(f"outputs.shape : {outputs.shape}")
+        train_labels = np.concatenate([batch_labels.numpy() for _, batch_labels in trainLoader])
+        count_of_labels = np.sum(train_labels, axis=0)
+        sum_of_labels = np.sum(count_of_labels)
+        print(f"count_of_labels : {count_of_labels}, sum_of_labels : {sum_of_labels}")
 
-        return parameters_prime, num_examples_train, results
+        return outputs, sum_of_labels, results
+        # return ndarrays_to_parameters(outputs), count_of_labels, results
 
+    # 서버에서 받은 파라미터로 모델을 업데이트하고, 테스트셋으로 평가
     def evaluate(self, parameters, config):
         utils.print_func_and_line()
         """Evaluate parameters on the locally held test set."""
         # Update local model parameters
-        model = self.set_parameters(parameters)
+        # model = self.__set_parameters(parameters)
 
         # Get config values
         steps: int = config["val_steps"]
@@ -146,7 +189,7 @@ class CustomDistillClient(fl.client.NumPyClient):
         testloader = DataLoader(self.testset, batch_size=16)
 
         device = torch.device("cuda:0" if torch.cuda.is_available() and self.args.use_cuda else "cpu")
-        result = utils.test(model, testloader, steps, device)
+        result = utils.test(self.model, testloader, steps, device, self.args)
         accuracy = result["acc"]
         loss = result["loss"]
         result = {f"test_" + k: v for k, v in result.items()}
@@ -204,10 +247,6 @@ def init_argurments():
 
 def init_comet_experiment(args: argparse.Namespace):
     utils.print_func_and_line()
-    print("api_key:", os.getenv('COMET_API_TOKEN'))
-    print("project_name:", os.getenv('COMET_PROJECT_NAME'))
-    print("workspace:", os.getenv('COMET_WORKSPACE'))
-    
     experiment = Experiment(
         api_key = os.getenv('COMET_API_TOKEN'),
         project_name = os.getenv('COMET_PROJECT_NAME'),
@@ -239,7 +278,7 @@ def main() -> None:
             publicset = torch.utils.data.Subset(publicset, range(10))
 
         # Start Flower client
-        client = CustomDistillClient(trainset, testset, 0.1, experiment, args)
+        client = CustomDistillClient(trainset, testset, publicset, validation_split=0.1, experiment= experiment, args= args)
         fl.client.start_numpy_client(server_address=f"0.0.0.0:{args.port}", client=client)
 
     if experiment is not None:

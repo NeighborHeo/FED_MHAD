@@ -139,17 +139,9 @@ class FedDF(FedAvg):
         if not self.accept_failures and failures:
             return None, {}
 
-        utils.print_func_and_line()
-        # Convert results
-        weights_results = [
-            (parameters_to_ndarrays(fit_res.parameters), fit_res.num_examples)
-            for _, fit_res in results
-        ]
-        utils.print_func_and_line()
         parameters_aggregated = ndarrays_to_parameters(
             self.fit_aggregation_fn(results)
         )
-        utils.print_func_and_line()
 
         # Aggregate custom metrics if aggregation fn was provided
         metrics_aggregated = {}
@@ -158,5 +150,5 @@ class FedDF(FedAvg):
             metrics_aggregated = self.fit_metrics_aggregation_fn(fit_metrics)
         elif server_round == 1:  # Only log this warning once
             log(WARNING, "No fit_metrics_aggregation_fn provided")
-        utils.print_func_and_line()
+            
         return parameters_aggregated, metrics_aggregated

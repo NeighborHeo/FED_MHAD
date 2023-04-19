@@ -124,11 +124,12 @@ class CustomServer:
         model.eval()
 
         logits_list = []
+        m = torch.nn.Sigmoid()
         with torch.no_grad():
             for inputs, _ in publicLoader:
                 inputs = inputs.to(device)
                 logits = model(inputs)
-                logits_list.append(logits.cpu())
+                logits_list.append(m(logits).detach())
 
         return torch.cat(logits_list, dim=0)
 
@@ -140,27 +141,26 @@ class CustomServer:
     
     def fit_aggregation_fn(self, results: List[Tuple[ClientProxy, FitRes]]) -> Parameters:
         """Aggregate the results of the training rounds."""
-        utils.print_func_and_line()
+
         # Step 1: Get the logits from all the models
 
         publicLoader = self.load_public_loader()
         fedavg_model = self.get_fedavg_model(results)
-        utils.print_func_and_line()
+
         logits_list = []
         for _, fit_res in results:
             copied_model = copy.deepcopy(self.model)
             copied_model = self.load_parameter(copied_model, parameters_to_ndarrays(fit_res.parameters))
             logits = self.get_logits(copied_model, publicLoader)
             logits_list.append(logits)
-        utils.print_func_and_line()
+
         # Step 2: Ensemble logits
         ensembled_logits = self.ensemble_logits(logits_list)
-        utils.print_func_and_line()
+
         # Step 3: Distill logits
         distilled_model = self.distill_training(fedavg_model, ensembled_logits, publicLoader)
         distilled_parameters = [val.cpu().numpy() for _, val in distilled_model.state_dict().items()]
 
-        utils.print_func_and_line()
         return distilled_parameters
 
     def distill_training(self, model: torch.nn.Module, ensembled_logits: torch.Tensor, publicLoader: DataLoader) -> torch.nn.Module:
@@ -177,6 +177,7 @@ class CustomServer:
         ]
         optimizer = torch.optim.SGD(params= parameters, lr=self.args.learning_rate, momentum=self.args.momentum, weight_decay=self.args.weight_decay)
 
+        m = torch.nn.Sigmoid()
         for epoch in range(self.args.local_epochs):
             running_loss = 0.0
             for i, (inputs, _) in enumerate(publicLoader):
@@ -184,6 +185,7 @@ class CustomServer:
                 optimizer.zero_grad()
 
                 outputs = model(inputs)
+                outputs = m(outputs)
                 loss = criterion(outputs, ensembled_logits[i * self.args.batch_size:(i + 1) * self.args.batch_size].to(device))
                 loss.backward()
                 optimizer.step()
@@ -269,8 +271,6 @@ def main() -> None:
     model = vit_tiny_patch16_224(pretrained=True, num_classes=args.num_classes)
     custom_server = CustomServer(model, args, experiment)
     custom_server.start_server(args.port, args.num_rounds)
-    
-    
 
     if experiment is not None:
         experiment.end()

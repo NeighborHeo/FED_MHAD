@@ -14,6 +14,10 @@ from early_stopper import EarlyStopper
 
 warnings.filterwarnings("ignore")
 
+import os
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env_comet'))
+
 from comet_ml import Experiment
 # from comet_ml.integration.pytorch import log_model
 
@@ -31,7 +35,7 @@ class CustomClient(fl.client.NumPyClient):
         self.validation_split = validation_split
         self.experiment = experiment
         self.args = args
-        self.save_path = f"checkpoints/{args.port}_client_{args.index}_best_models"
+        self.save_path = f"checkpoints/{args.port}/client_{args.index}_best_models"
         self.early_stopper = EarlyStopper(patience=5, delta=1e-4, checkpoint_dir=self.save_path)
         
 
@@ -102,7 +106,7 @@ class CustomClient(fl.client.NumPyClient):
         testloader = DataLoader(self.testset, batch_size=16)
 
         device = torch.device("cuda:0" if torch.cuda.is_available() and self.args.use_cuda else "cpu")
-        result = utils.test(model, testloader, steps, device)
+        result = utils.test(model, testloader, steps, device, self.args)
         accuracy = result["acc"]
         loss = result["loss"]
         result = {f"test_" + k: v for k, v in result.items()}
@@ -145,13 +149,14 @@ def init_argurments():
     parser.add_argument("--weight_decay", type=float, default=1e-4, required=False, help="Weight decay. Default: 1e-4")
     parser.add_argument("--batch_size", type=int, default=32, required=False, help="Batch size. Default: 32")
     parser.add_argument("--datapath", type=str, default="~/.data/", required=False, help="dataset path")
-    parser.add_argument("--alpha", type=float, default=1.0, required=False, help="alpha")
+    parser.add_argument("--alpha", type=float, default=0.5, required=False, help="alpha")
     parser.add_argument("--seed", type=int, default=1, required=False, help="seed")
     parser.add_argument("--num_rounds", type=int, default=100, required=False, help="Number of rounds to run. Default: 100")
     parser.add_argument("--dataset", type=str, default="pascal_voc", required=False, help="Dataset to use. Default: pascal_voc")
     parser.add_argument("--num_classes", type=int, default=20, required=False, help="Number of classes. Default: 10")
     parser.add_argument("--N_parties", type=int, default=5, required=False, help="Number of clients to use. Default: 10")
     parser.add_argument("--task", type=str, default="multilabel", required=False, help="Task to run. Default: multilabel")
+    parser.add_argument("--noisy", type=float, default=0.0, required=False, help="Percentage of noisy data. Default: 0.0")
     
     args = parser.parse_args()
     print("Experiment key:", args.experiment_key, "port:", args.port)
@@ -159,12 +164,12 @@ def init_argurments():
 
 def init_comet_experiment(args: argparse.Namespace):
     experiment = Experiment(
-        api_key = "3JenmgUXXmWcKcoRk8Yra0XcD",
-        project_name = "benchmark_fedavg_multilabel",
-        workspace="neighborheo"
+        api_key = os.getenv('COMET_API_TOKEN'),
+        project_name = os.getenv('COMET_PROJECT_NAME'),
+        workspace= os.getenv('COMET_WORKSPACE'),
     )
     experiment.log_parameters(args)
-    experiment.set_name(f"client_{args.index}_({args.port})_lr_{args.learning_rate}_bs_{args.batch_size}")
+    experiment.set_name(f"client_{args.index}_({args.port})_lr_{args.learning_rate}_bs_{args.batch_size}_ap_{args.alpha}_ns_{args.noisy}")
     return experiment
 
 def main() -> None:

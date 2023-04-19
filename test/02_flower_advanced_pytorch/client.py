@@ -98,7 +98,7 @@ class CustomClient(fl.client.NumPyClient):
         testloader = DataLoader(self.testset, batch_size=16)
 
         device = torch.device("cuda:0" if torch.cuda.is_available() and self.args.use_cuda else "cpu")
-        loss, accuracy = utils.test(model, testloader, steps, device)
+        loss, accuracy = utils.test(model, testloader, steps, device, self.args)
         self.experiment.log_metrics({"test_loss": loss, "test_accuracy": accuracy}, step=server_round)
         return float(loss), len(self.testset), {"accuracy": float(accuracy)}
 

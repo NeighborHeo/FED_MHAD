@@ -15,6 +15,8 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import os
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env_comet'))
 
 from comet_ml import Experiment
 # from comet_ml.integration.pytorch import log_model
@@ -23,7 +25,7 @@ class CustomServer:
     def __init__(self, model: torch.nn.Module, args: argparse.Namespace, experiment: Optional[Experiment] = None):
         self.experiment = experiment
         self.args = args  # add this line to save args as an instance attribute
-        self.save_path = f"checkpoints/{args.port}_server_best_models"
+        self.save_path = f"checkpoints/{args.port}/global"
         self.early_stopper = EarlyStopper(patience=5, delta=1e-4, checkpoint_dir=self.save_path)
         self.strategy = self.create_strategy(model, args.toy)
         
@@ -63,7 +65,7 @@ class CustomServer:
             model.load_state_dict(state_dict, strict=True)
 
             device = torch.device("cuda:0" if torch.cuda.is_available() and self.args.use_cuda else "cpu")
-            result = utils.test(model, valLoader, device=device)
+            result = utils.test(model, valLoader, device=device, args=self.args)
             accuracy = result["acc"]
             loss = result["loss"]
             
@@ -100,6 +102,7 @@ class CustomServer:
         )
 
     def start_server(self, port: int, num_rounds: int):
+        
         fl.server.start_server(
             server_address=f"0.0.0.0:{port}",
             config=fl.server.ServerConfig(num_rounds=num_rounds),
@@ -118,25 +121,27 @@ def init_argurments() -> argparse.Namespace:
     parser.add_argument("--weight_decay", type=float, default=1e-5, required=False, help="Weight decay. Default: 1e-5")
     parser.add_argument("--batch_size", type=int, default=32, required=False, help="Batch size. Default: 32")
     parser.add_argument("--datapath", type=str, default="~/.data/", required=False, help="dataset path")
-    parser.add_argument("--alpha", type=float, default=1.0, required=False, help="alpha")
+    parser.add_argument("--alpha", type=float, default=0.5, required=False, help="alpha")
     parser.add_argument("--seed", type=int, default=1, required=False, help="seed")
     parser.add_argument("--num_rounds", type=int, default=100, required=False, help="Number of rounds to run. Default: 100")
     parser.add_argument("--dataset", type=str, default="pascal_voc", required=False, help="Dataset to use. Default: pascal_voc")
     parser.add_argument("--num_classes", type=int, default=20, required=False, help="Number of classes. Default: 10")
     parser.add_argument("--N_parties", type=int, default=5, required=False, help="Number of clients to use. Default: 10")
     parser.add_argument("--task", type=str, default="multilabel", required=False, help="Task to run. Default: multilabel")
+    parser.add_argument("--noisy", type=float, default=0.0, required=False, help="Percentage of noisy data. Default: 0.0")
+    
     args = parser.parse_args()
     print("Experiment key:", args.experiment_key, "port:", args.port)
     return args
         
 def init_comet_experiment(args: argparse.Namespace):
     experiment = Experiment(
-        api_key = "3JenmgUXXmWcKcoRk8Yra0XcD",
-        project_name = "benchmark_fedavg_multilabel",
-        workspace="neighborheo"
+        api_key = os.getenv('COMET_API_TOKEN'),
+        project_name = os.getenv('COMET_PROJECT_NAME'),
+        workspace= os.getenv('COMET_WORKSPACE'),
     )
     experiment.log_parameters(args)
-    experiment.set_name(f"global_({args.port})_lr_{args.learning_rate}_bs_{args.batch_size}_rd_{args.num_rounds}")
+    experiment.set_name(f"global_({args.port})_lr_{args.learning_rate}_bs_{args.batch_size}_rd_{args.num_rounds}_ap_{args.alpha}_ns_{args.noisy}")
     return experiment
 
 def main() -> None:
@@ -154,12 +159,9 @@ def main() -> None:
     model = vit_tiny_patch16_224(pretrained=True, num_classes=args.num_classes)
     custom_server = CustomServer(model, args, experiment)
     custom_server.start_server(args.port, args.num_rounds)
-    
+
     if experiment is not None:
         experiment.end()
 
 if __name__ == "__main__":
     main()
-
-
-

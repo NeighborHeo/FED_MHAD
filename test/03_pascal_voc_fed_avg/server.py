@@ -63,7 +63,7 @@ class CustomServer:
             model.load_state_dict(state_dict, strict=True)
 
             device = torch.device("cuda:0" if torch.cuda.is_available() and self.args.use_cuda else "cpu")
-            loss, accuracy = utils.test(model, valLoader, device=device)
+            loss, accuracy = utils.test(model, valLoader, device=device, args=self.args)
             
             is_best_accuracy = self.early_stopper.is_best_accuracy(accuracy)
             if is_best_accuracy:

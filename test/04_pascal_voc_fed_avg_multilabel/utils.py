@@ -59,7 +59,7 @@ def train(net, trainloader, valloader, epochs, device: str = "cpu", args=None):
     print("Starting training...")
     
     net.to(device)  # move model to GPU if available
-    if args == 'singlelabel' : 
+    if args.task == 'singlelabel' : 
         criterion = torch.nn.CrossEntropyLoss().to(device)
     else:
         criterion = torch.nn.MultiLabelSoftMarginLoss().to(device)
@@ -80,7 +80,7 @@ def train(net, trainloader, valloader, epochs, device: str = "cpu", args=None):
         for images, labels in tqdm(trainloader):
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
-            if args == 'singlelabel' : 
+            if args.task == 'singlelabel' : 
                 loss = criterion(net(images), labels)
             else:
                 loss = criterion(net(images), labels.float())
@@ -102,7 +102,7 @@ def test(net, testloader, steps: int = None, device: str = "cpu", args=None):
     """Validate the network on the entire test set."""
     print("Starting evalutation...")
     net.to(device)  # move model to GPU if available
-    if args == 'singlelabel' : 
+    if args.task == 'singlelabel' : 
         criterion = torch.nn.CrossEntropyLoss().to(device)
     else:
         criterion = torch.nn.MultiLabelSoftMarginLoss().to(device)
@@ -120,12 +120,12 @@ def test(net, testloader, steps: int = None, device: str = "cpu", args=None):
             output_list.append(m(outputs).cpu().numpy())
             target_list.append(targets.cpu().numpy())
             
-            if args == 'singlelabel' :
+            if args.task == 'singlelabel' :
                 loss += criterion(outputs, targets).item()
             else:
                 loss += criterion(outputs, targets.float()).item()
             total += outputs.size(0)
-            if args == 'singlelabel' :
+            if args.task == 'singlelabel' :
                 _, predicted = torch.max(outputs.data, axis=1)
                 correct += predicted.eq(targets).sum().item()
             else:

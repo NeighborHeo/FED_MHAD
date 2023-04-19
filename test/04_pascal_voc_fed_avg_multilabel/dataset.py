@@ -60,18 +60,18 @@ class PascalVocPartition:
         self.args = args
         self.priv_data = {}
         # self.path = pathlib.Path(args.datapath).joinpath('PASCAL_VOC_2012', f'N_clients_{args.N_parties}_alpha_{args.alpha:.1f}')
-        self.path = pathlib.Path.home().joinpath('.data', 'PASCAL_VOC_2012', f'N_clients_{args.N_parties}_alpha_{args.alpha:.1f}')
+        self.path = pathlib.Path.home().joinpath('.data', 'PASCAL_VOC_2012_sampling', f'N_clients_{args.N_parties}_alpha_{args.alpha:.1f}')
     
     def load_partition(self, i: int):
-        path = pathlib.Path.home().joinpath('.data', 'PASCAL_VOC_2012')
+        path = pathlib.Path.home().joinpath('.data', 'PASCAL_VOC_2012_sampling')
         if i == -1:
-            party_img = np.load(path.joinpath('PASCAL_VOC_train_224_Img.npy'))
-            party_label = np.load(path.joinpath('PASCAL_VOC_train_224_Label.npy'))
+            party_img = np.load(path.joinpath('train_images.npy'))
+            party_label = np.load(path.joinpath('train_labels.npy'))
             party_img, party_label = self.filter_images_by_label_type(self.args.task, party_img, party_label)
             train_dataset = mydataset(party_img, party_label)
             
-            test_imgs = np.load(path.joinpath('PASCAL_VOC_val_224_Img.npy'))
-            test_labels = np.load(path.joinpath('PASCAL_VOC_val_224_Label.npy'))
+            test_imgs = np.load(path.joinpath('val_images_sub.npy'))
+            test_labels = np.load(path.joinpath('val_labels_sub.npy'))
             test_imgs, test_labels = self.filter_images_by_label_type(self.args.task, test_imgs, test_labels)
             test_partition = mydataset(test_imgs, test_labels)
         else :
@@ -80,8 +80,8 @@ class PascalVocPartition:
             party_img, party_label = self.filter_images_by_label_type(self.args.task, party_img, party_label)
             train_dataset = mydataset(party_img, party_label)
             
-            test_imgs = np.load(path.joinpath('PASCAL_VOC_val_224_Img.npy'))
-            test_labels = np.load(path.joinpath('PASCAL_VOC_val_224_Label.npy'))
+            test_imgs = np.load(path.joinpath('val_images_sub.npy'))
+            test_labels = np.load(path.joinpath('val_labels_sub.npy'))
             test_imgs, test_labels = self.filter_images_by_label_type(self.args.task, test_imgs, test_labels)
             n_test = int(test_imgs.shape[0] / self.args.N_parties)
             test_dataset = mydataset(test_imgs, test_labels)

@@ -44,7 +44,7 @@ than or equal to the values of `min_fit_clients` and `min_evaluate_clients`.
 
 AggregationFn = Callable[[List[Tuple[ClientProxy, FitRes]]], Parameters]
 # flake8: noqa: E501
-class FedDF(FedAvg):
+class FedMHAD(FedAvg):
     """Configurable FedAvg with Momentum strategy implementation."""
 
     # pylint: disable=too-many-arguments,too-many-instance-attributes,line-too-long

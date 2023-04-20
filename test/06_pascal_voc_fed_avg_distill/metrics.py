@@ -85,6 +85,11 @@ def compute_multi_accuracy(output, target, topk=(1,)):
     return res
     
 def compute_mean_average_precision(y_true, y_pred_proba):
+    if np.any(np.isnan(y_pred_proba)):
+        print("y_pred_proba contains nan")
+        y_pred_proba[np.isnan(y_pred_proba)] = 0
+        return 0, np.zeros(y_true.shape[1])
+    
     average_precisions = []
     for i in range(y_true.shape[1]):
         if len(np.unique(y_true[:, i])) == 1:

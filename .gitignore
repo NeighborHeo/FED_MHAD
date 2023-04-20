@@ -1,4 +1,3 @@
 *.pth
 *.pyc
 __pycache__/
-test/05_pascal_voc_distillation/.env_comet

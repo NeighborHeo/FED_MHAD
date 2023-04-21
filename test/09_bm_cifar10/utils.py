@@ -140,7 +140,6 @@ def test(net, testloader, steps: int = None, device: str = "cpu", args=None):
     target = np.concatenate(target_list, axis=0)
     if args.task == 'singlelabel' :
         acc = compute_single_accuracy(output, target)
-        
         print("Accuracy: ", acc, "Loss: ", loss / total)
         loss /= len(testloader.dataset)
         accuracy = correct / len(testloader.dataset)

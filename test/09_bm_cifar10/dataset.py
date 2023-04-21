@@ -264,15 +264,27 @@ class Test_PascalVocPartition(unittest.TestCase):
         # train_dataset, test_dataset = cifar10.load_partition(-1)
         # train_dataset labels 
         # y class count 
+        loader = DataLoader(test_dataset, batch_size=args.batch_size)
         
         # self.assertEqual(len(train_dataset), 1000)
         # self.assertEqual(len(test_dataset), 100)
         train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size)
+        print(len(train_dataloader.dataset), len(test_dataset.dataset)) 
+        print("length of test dataset is ", len(test_dataset))
+        print("length of loader is ", len(loader.dataset))
         targets = []
+        total = 0
+        correct = 0
         for img, label in train_dataloader:
             targets.append(label)
+            total += img.shape[0]
+            print("total is ", total)
+            print("label is ", len(label))
+            correct += len(label)
         targets = torch.cat(targets)
+        print("total is ", total, "length of targets is ", len(train_dataloader.dataset), "correct is ", correct)
         print(np.unique(targets.numpy(), return_counts=True))
+            
     
 
 

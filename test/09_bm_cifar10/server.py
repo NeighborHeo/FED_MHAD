@@ -20,7 +20,7 @@ from flwr.server.strategy.aggregate import aggregate
 import warnings
 warnings.filterwarnings("ignore")
 from tqdm import tqdm
-
+import multiprocessing
 import os
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env_comet'))
@@ -91,7 +91,7 @@ class CustomServer:
                 print(f"Early stopping : {self.early_stopper.counter} >= {self.early_stopper.patience}")
                 # todo : stop server
                 
-            if self.experiment is not None:
+            if self.experiment is not None and server_round != 0:
                 result = {f"test_" + k: v for k, v in result.items()}
                 self.experiment.log_metrics(result, step=server_round)
                 
@@ -160,16 +160,26 @@ class CustomServer:
         publicLoader = self.load_public_loader()
         fedavg_model = self.get_fedavg_model(results)
 
-        logits_list = []
-        attns_list = []
-        for _, fit_res in tqdm(results):
+        def process(fit_res):
             copied_model = copy.deepcopy(self.model)
             copied_model = self.load_parameter(copied_model, parameters_to_ndarrays(fit_res.parameters))
             logits, attns = self.get_logits_and_attns(copied_model, publicLoader)
-            print(f"Logits shape : {logits.shape}, attns shape : {attns.shape}")
-            logits_list.append(logits)
-            attns_list.append(attns)
+            return logits, attns
+        with multiprocessing.Pool(processes=4) as pool:
+            results = list(tqdm(pool.imap(process, [fit_res for _, fit_res in results]), total=len(results)))
+        logits_list = [logits for logits, _ in results]
+        attns_list = [attns for _, attns in results]
         total_attns = torch.stack(attns_list, dim=0)
+        
+        # logits_list = []
+        # attns_list = []
+        # for _, fit_res in tqdm(results):
+        #     copied_model = copy.deepcopy(self.model)
+        #     copied_model = self.load_parameter(copied_model, parameters_to_ndarrays(fit_res.parameters))
+        #     logits, attns = self.get_logits_and_attns(copied_model, publicLoader)
+        #     logits_list.append(logits)
+        #     attns_list.append(attns)
+        # total_attns = torch.stack(attns_list, dim=0)
         # Step 2: Ensemble logits
         ensembled_logits = self.ensemble_logits(logits_list)
 
@@ -216,7 +226,7 @@ class CustomServer:
     def create_strategy(self, model: torch.nn.Module, toy: bool):
         model_parameters = [val.cpu().numpy() for _, val in model.state_dict().items()]
         print("create_strategy")
-        return FedMHAD(
+        return fl.server.strategy.FedAvg(
             fraction_fit=0.4,
             fraction_evaluate=0.4,
             min_fit_clients=8,
@@ -225,7 +235,6 @@ class CustomServer:
             evaluate_fn=self.get_evaluate_fn(model, toy),
             on_fit_config_fn=self.fit_config,
             on_evaluate_config_fn=self.evaluate_config,
-            fit_aggregation_fn=self.fit_aggregation_fn,
             initial_parameters=fl.common.ndarrays_to_parameters(model_parameters),
         )
 

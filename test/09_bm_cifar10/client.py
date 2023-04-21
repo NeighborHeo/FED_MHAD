@@ -110,6 +110,7 @@ class CustomClient(fl.client.NumPyClient):
         accuracy = result["acc"]
         loss = result["loss"]
         result = {f"test_" + k: v for k, v in result.items()}
+        
         self.experiment.log_metrics(result, step=server_round)
         return float(loss), len(self.testset), {"accuracy": float(accuracy)}
 

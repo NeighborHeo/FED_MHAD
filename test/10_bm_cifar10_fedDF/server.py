@@ -114,6 +114,10 @@ class CustomServer:
         publicLoader = DataLoader(publicset, batch_size=self.args.batch_size)
         return publicLoader
     
+    def get_properties(self, config: Config) -> Dict[str, Scalar]:
+        # return
+        return super().get_properties(config)
+
     def load_parameter(self, model: torch.nn.Module, parameters: fl.common.NDArrays)-> torch.nn.Module:
         state_dict = OrderedDict({k: torch.tensor(v) for k, v in zip(model.state_dict().keys(), parameters)})
         model.load_state_dict(state_dict, strict=True)

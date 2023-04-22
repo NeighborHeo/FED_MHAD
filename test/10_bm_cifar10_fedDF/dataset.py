@@ -30,6 +30,7 @@ class mydataset(torch.utils.data.Dataset):
         self.verbose = verbose
         self.aug = False
         self.transforms = transforms
+        self.dataset = list(zip(self.img, self.gt))
         return
     def __len__(self):
         return len(self.img)
@@ -143,52 +144,102 @@ def plot_whole_y_distribution(y_data):
     for class_id in range(N_class):
         plt.text(class_id, np.bincount(y_data)[class_id], np.bincount(y_data)[class_id], ha="center", va="bottom")
     plt.show()
-    
+
 class Cifar10Partition: 
     def __init__(self, args: argparse.Namespace):
         self.args = args
-        # self.trainset = torch.utils.data.Subset(torchvision.datasets.CIFAR10(root='~/.data', train=True, download=False, transform=transform_train), range(0, 5000))
-        self.trainset = torchvision.datasets.CIFAR10(root='~/.data', train=True, download=False, transform=transform_train)
-        include_idx, exclude_idx, _, _ = train_test_split(np.arange(0, len(self.trainset)), np.arange(0, len(self.trainset)), train_size=0.1, random_state=42, stratify=self.trainset.targets)
-        # X_train, X_train_sub, y_train, y_train_sub = train_test_split(self.trainset.data, self.trainset.targets, train_size=0.1, random_state=42, stratify=self.trainset.targets)
-        # self.trainset = torch.utils.data.TensorDataset(torch.Tensor(X_train), torch.Tensor(y_train), transform=transform_train)
-        # print("trainset: ", len(self.trainset), "trainset.data: ", len(self.trainset[:][0]), "trainset.targets: ", len(self.trainset[:][1]))
-        self.train_indices = include_idx
-        # self.trainset = torch.utils.data.Subset(self.trainset, include_idx)
-        self.testset = torchvision.datasets.CIFAR10(root='~/.data', train=False, download=False, transform=transform_train)
-        include_idx, exclude_idx, _, _ = train_test_split(np.arange(0, len(self.testset)), np.arange(0, len(self.testset)), train_size=0.1, random_state=42, stratify=self.testset.targets)
-        self.test_indices = include_idx
-        # self.testset = torch.utils.data.Subset(self.testset, include_idx)
-        # X_test, X_test_sub, y_test, y_test_sub = train_test_split(self.testset.data, self.testset.targets, train_size=0.1, random_state=42, stratify=self.testset.targets)
-        # self.testset = torch.utils.data.TensorDataset(torch.Tensor(X_test), torch.Tensor(y_test)
-        # print("trainset: ", len(self.trainset), "testset.data: ", len(self.testset[:][0]), "testset.targets: ", len(self.testset[:][1]))
+        file_path = pathlib.Path(args.datapath).expanduser() / 'cifar10'/ 'cifar10_train_224_images.npy'
+        if file_path.exists():
+            train_images = np.load(pathlib.Path(args.datapath).expanduser() / 'cifar10' / 'cifar10_train_224_images.npy')
+            train_labels = np.load(pathlib.Path(args.datapath).expanduser() / 'cifar10' / 'cifar10_train_224_labels.npy')
+            include_idx, exclude_idx, _, _ = train_test_split(np.arange(0, len(train_labels)), np.arange(0, len(train_labels)), train_size=0.1, random_state=42, stratify=train_labels)
+            self.train_images = train_images[include_idx]
+            self.train_labels = train_labels[include_idx]
+            
+            test_images = np.load(pathlib.Path(args.datapath).expanduser() / 'cifar10' / 'cifar10_test_224_images.npy')
+            test_labels = np.load(pathlib.Path(args.datapath).expanduser() / 'cifar10' / 'cifar10_test_224_labels.npy')
+            include_idx, exclude_idx, _, _ = train_test_split(np.arange(0, len(test_labels)), np.arange(0, len(test_labels)), train_size=0.1, random_state=42, stratify=test_labels)
+            self.test_images = test_images[include_idx]
+            self.test_labels = test_labels[include_idx]
+        else :
+            print("CIFAR10 dataset is not found.")
+        
         self.alpha = 0.1
         self.N_class = 10
         self.N_parties = 20
         self.partition_indices = self.init_partition()
         
     def init_partition(self):
-        self.X_train_data = np.array([self.trainset.data[i] for i in self.train_indices])
-        self.y_train_data = np.array([self.trainset.targets[i] for i in self.train_indices])
-        self.split_data = get_dirichlet_split_data(self.X_train_data, self.y_train_data, self.N_parties, self.N_class, self.alpha)
+        self.split_data = get_dirichlet_split_data(self.train_images, self.train_labels, self.N_parties, self.N_class, self.alpha)
         
-    def load_partition(self, i: int, alpha=0.1):
+    def load_partition(self, i: int):
         if i == -1:
-            return (self.trainset, self.testset)
-            # train_partition = torch.utils.data.Subset(self.trainset, range(0, 16))
-            # test_partition = torch.utils.data.Subset(self.testset, range(0, 16))
-            # return train_partition, test_partition
-
-        # 데이터셋 생성
-        # train_partition = mydataset(self.X_train_data[self.split_data[i]["idx"]], self.y_train_data[self.split_data[i]["idx"]], transforms=transform_train)
-        train_partition = torch.utils.data.Subset(self.trainset, self.y_train_data[self.split_data[i]["idx"]])
-        # train_partition = torch.utils.data.Subset(self.trainset, range(0, 16))
+            trainset = mydataset(self.train_images, self.train_labels)
+            testset = mydataset(self.test_images, self.test_labels)
+            return trainset, testset
         
-        # 테스트 세트는 크기를 일정하게 자른다. 
-        len_test = int(len(self.testset) / self.N_parties)
-        test_partition = torch.utils.data.Subset(self.testset, range(i*len_test, (i+1)*len_test))
-        # test_partition = torch.utils.data.Subset(self.testset, range(0, 16))
-        return train_partition, test_partition
+        # 데이터셋 생성
+        trainset = mydataset(self.train_images[self.split_data[i]["idx"]], self.train_labels[self.split_data[i]["idx"]])
+        len_test = int(len(self.test_labels) / self.N_parties)
+        testset = mydataset(self.test_images[range(i*len_test, (i+1)*len_test)], self.test_labels[range(i*len_test, (i+1)*len_test)])
+        return trainset, testset
+    
+    def get_num_of_data_per_class(self, dataset):
+        """Returns the number of data per class in the given dataset."""
+        labels = [dataset[i][1] for i in range(len(dataset))]
+        return np.bincount(labels)
+
+
+# class Cifar10Partition: 
+#     def __init__(self, args: argparse.Namespace):
+#         self.args = args
+#         # self.trainset = torch.utils.data.Subset(torchvision.datasets.CIFAR10(root='~/.data', train=True, download=False, transform=transform_train), range(0, 5000))
+#         self.trainset = torchvision.datasets.CIFAR10(root='~/.data', train=True, download=False, transform=transform_train)
+#         include_idx, exclude_idx, _, _ = train_test_split(np.arange(0, len(self.trainset)), np.arange(0, len(self.trainset)), train_size=0.1, random_state=42, stratify=self.trainset.targets)
+#         # X_train, X_train_sub, y_train, y_train_sub = train_test_split(self.trainset.data, self.trainset.targets, train_size=0.1, random_state=42, stratify=self.trainset.targets)
+#         # self.trainset = torch.utils.data.TensorDataset(torch.Tensor(X_train), torch.Tensor(y_train), transform=transform_train)
+#         # print("trainset: ", len(self.trainset), "trainset.data: ", len(self.trainset[:][0]), "trainset.targets: ", len(self.trainset[:][1]))
+#         self.train_indices = include_idx
+#         # self.trainset = torch.utils.data.Subset(self.trainset, include_idx)
+#         self.testset = torchvision.datasets.CIFAR10(root='~/.data', train=False, download=False, transform=transform_train)
+#         include_idx, exclude_idx, _, _ = train_test_split(np.arange(0, len(self.testset)), np.arange(0, len(self.testset)), train_size=0.1, random_state=42, stratify=self.testset.targets)
+#         self.test_indices = include_idx
+#         # self.testset = torch.utils.data.Subset(self.testset, include_idx)
+#         # X_test, X_test_sub, y_test, y_test_sub = train_test_split(self.testset.data, self.testset.targets, train_size=0.1, random_state=42, stratify=self.testset.targets)
+#         # self.testset = torch.utils.data.TensorDataset(torch.Tensor(X_test), torch.Tensor(y_test)
+#         # print("trainset: ", len(self.trainset), "testset.data: ", len(self.testset[:][0]), "testset.targets: ", len(self.testset[:][1]))
+#         self.alpha = 0.1
+#         self.N_class = 10
+#         self.N_parties = 20
+#         self.partition_indices = self.init_partition()
+        
+#     def init_partition(self):
+#         self.X_train_data = np.array([self.trainset.data[i] for i in self.train_indices])
+#         self.y_train_data = np.array([self.trainset.targets[i] for i in self.train_indices])
+#         self.split_data = get_dirichlet_split_data(self.X_train_data, self.y_train_data, self.N_parties, self.N_class, self.alpha)
+        
+#     def load_partition(self, i: int, alpha=0.1):
+#         if i == -1:
+#             return (self.trainset, self.testset)
+#             # train_partition = torch.utils.data.Subset(self.trainset, range(0, 16))
+#             # test_partition = torch.utils.data.Subset(self.testset, range(0, 16))
+#             # return train_partition, test_partition
+
+#         # 데이터셋 생성
+#         # train_partition = mydataset(self.X_train_data[self.split_data[i]["idx"]], self.y_train_data[self.split_data[i]["idx"]], transforms=transform_train)
+#         train_partition = torch.utils.data.Subset(self.trainset, self.y_train_data[self.split_data[i]["idx"]])
+#         # train_partition = torch.utils.data.Subset(self.trainset, range(0, 16))
+        
+#         # 테스트 세트는 크기를 일정하게 자른다. 
+#         len_test = int(len(self.testset) / self.N_parties)
+#         test_partition = torch.utils.data.Subset(self.testset, range(i*len_test, (i+1)*len_test))
+#         # test_partition = torch.utils.data.Subset(self.testset, range(0, 16))
+#         return train_partition, test_partition
+    
+#     def get_num_of_data_per_class(self, dataset):
+#         """Returns the number of data per class in the given dataset."""
+#         labels = [dataset[i][1] for i in range(len(dataset))]
+#         return np.bincount(labels)
     
 class PascalVocPartition:
     def __init__(self, args: argparse.Namespace):
@@ -269,7 +320,7 @@ class Test_PascalVocPartition(unittest.TestCase):
         args = argparse.Namespace()
         args.datapath = '~/.data'
         args.N_parties = 5
-        args.alpha = 0.1
+        args.alpha = 0.1    
         args.task = 'multilabel'
         args.batch_size = 16
         cifar10 = Cifar10Partition(args)
@@ -283,7 +334,7 @@ class Test_PascalVocPartition(unittest.TestCase):
         # y class count 
         test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size)
         train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size)
-        print(len(train_dataloader.dataset), len(test_dataset.dataset)) 
+        print(len(train_dataloader.dataset), len(test_dataloader.dataset))
         print("length of test dataset is ", len(test_dataset))
         print("length of loader is ", len(test_dataloader))
         targets = []

@@ -292,8 +292,6 @@ class Test_PascalVocPartition(unittest.TestCase):
         for img, label in train_dataloader:
             targets.append(label)
             total += img.shape[0]
-            print("total is ", total)
-            print("label is ", len(label))
             correct += len(label)
         targets = torch.cat(targets)
         print("total is ", total, "length of targets is ", len(train_dataloader.dataset), "correct is ", correct)

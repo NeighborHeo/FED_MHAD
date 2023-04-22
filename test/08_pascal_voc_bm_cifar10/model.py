@@ -295,7 +295,7 @@ def vit_tiny_patch16_224(pretrained=False, patch_size=16, num_heads=3, **kwargs)
         #     temp[name] = j
         # model.load_state_dict(temp, strict=False)
         num_classes = kwargs['num_classes'] if 'num_classes' in kwargs else 20
-        print('num_classes', num_classes)
+        
         temp_model = timm.create_model('vit_tiny_patch16_224', pretrained=True, num_classes=num_classes)
         m, u = model.load_state_dict(temp_model.state_dict(), strict=False)
         print(m, u)

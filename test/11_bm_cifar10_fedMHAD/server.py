@@ -12,7 +12,7 @@ import copy
 from dataset import PascalVocPartition, Cifar10Partition
 from model import vit_tiny_patch16_224
 from early_stopper import EarlyStopper
-from feddf import FedDF
+from fedmhad import FedMHAD
 from mha_loss import MHALoss
 from flwr.common import (parameters_to_ndarrays, ndarrays_to_parameters, FitRes, MetricsAggregationFn, NDArrays, Parameters, Scalar, Config)
 from flwr.server.client_proxy import ClientProxy
@@ -141,14 +141,16 @@ class CustomServer:
         model.eval()
 
         logits_list = []
+        total_attns = []
         m = torch.nn.Sigmoid()
         with torch.no_grad():
             for inputs, _ in publicLoader:
                 inputs = inputs.to(device)
-                logits = model(inputs, return_attn=False)
+                logits, attn = model(inputs, return_attn=True)
                 logits_list.append(m(logits).detach())
+                total_attns.append(attn.detach())
 
-        return torch.cat(logits_list, dim=0)
+        return torch.cat(logits_list, dim=0), torch.cat(total_attns, dim=0)
 
     def ensemble_logits(self, logits_list: List[torch.Tensor]) -> torch.Tensor:
         """Ensemble logits from multiple models."""
@@ -174,20 +176,24 @@ class CustomServer:
         #     logits_list = [logits for logits in results]
         
         logits_list = []
+        attns_list = []
         for _, fit_res in tqdm(results):
             copied_model = copy.deepcopy(self.model)
             copied_model = self.load_parameter(copied_model, parameters_to_ndarrays(fit_res.parameters))
-            logits = self.get_logits_and_attns(copied_model, publicLoader)
+            logits, attns = self.get_logits_and_attns(copied_model, publicLoader)
             logits_list.append(logits)
+            attns_list.append(attns)
+        total_attns = torch.stack(attns_list, dim=0)
+        # Step 2: Ensemble logits
         ensembled_logits = self.ensemble_logits(logits_list)
 
         # Step 3: Distill logits
-        distilled_model = self.distill_training(fedavg_model, ensembled_logits, publicLoader)
+        distilled_model = self.distill_training(fedavg_model, ensembled_logits, total_attns, publicLoader)
         distilled_parameters = [val.cpu().numpy() for _, val in distilled_model.state_dict().items()]
 
         return distilled_parameters
 
-    def distill_training(self, model: torch.nn.Module, ensembled_logits: torch.Tensor, publicLoader: DataLoader) -> torch.nn.Module:
+    def distill_training(self, model: torch.nn.Module, ensembled_logits: torch.Tensor, total_attns: torch.Tensor, publicLoader: DataLoader) -> torch.nn.Module:
         """Perform distillation training."""
         device = torch.device("cuda:0" if torch.cuda.is_available() and self.args.use_cuda else "cpu")
         model.to(device)
@@ -211,16 +217,20 @@ class CustomServer:
                 outputs, attns = model(inputs, return_attn=True)
                 outputs = m(outputs)
                 loss = criterion(outputs, ensembled_logits[i * self.args.batch_size:(i + 1) * self.args.batch_size].to(device))
-                loss.backward()
+                loss2 = criterion2(total_attns[:, i * self.args.batch_size:(i + 1) * self.args.batch_size].to(device), attns)
+                lambda_ = 0.09
+                total_loss = (1-lambda_) * loss + lambda_ * loss2
+                total_loss.backward()
                 optimizer.step()
-                running_loss += loss.item()
+
+                running_loss += total_loss.item()
             print(f"Distillation Epoch {epoch + 1}/{self.args.local_epochs}, Loss: {running_loss / len(publicLoader)}")
         return model
             
     def create_strategy(self, model: torch.nn.Module, toy: bool):
         model_parameters = [val.cpu().numpy() for _, val in model.state_dict().items()]
         print("create_strategy")
-        return FedDF(
+        return FedMHAD(
             fraction_fit=0.4,
             fraction_evaluate=0.4,
             min_fit_clients=8,

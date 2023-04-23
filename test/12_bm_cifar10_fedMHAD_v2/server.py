@@ -191,17 +191,19 @@ class CustomServer:
             class_counts.append(self.get_class_count_from_dict(fit_res.metrics))
         total_attns = torch.stack(attns_list, dim=0)
         count_counts = torch.stack(class_counts, dim=0)
-        utils.en
+        
         # Step 2: Ensemble logits
-        ensembled_logits = self.ensemble_logits(logits_list)
-
+        logit_weights = class_counts / class_counts.sum(dim=0, keepdim=True)
+        ensembled_logits = utils.compute_ensemble_logits(logits_list, logit_weights)
+        sim_weights = utils.calculate_normalized_similarity_weights(ensemble_logits, total_logits, "cosine")
+            
         # Step 3: Distill logits
-        distilled_model = self.distill_training(fedavg_model, ensembled_logits, total_attns, publicLoader)
+        distilled_model = self.distill_training(fedavg_model, ensembled_logits, total_attns, sim_weights, publicLoader)
         distilled_parameters = [val.cpu().numpy() for _, val in distilled_model.state_dict().items()]
 
         return distilled_parameters
 
-    def distill_training(self, model: torch.nn.Module, ensembled_logits: torch.Tensor, total_attns: torch.Tensor, publicLoader: DataLoader) -> torch.nn.Module:
+    def distill_training(self, model: torch.nn.Module, ensembled_logits: torch.Tensor, total_attns: torch.Tensor, sim_weights: torch.Tensor, publicLoader: DataLoader) -> torch.nn.Module:
         """Perform distillation training."""
         device = torch.device("cuda:0" if torch.cuda.is_available() and self.args.use_cuda else "cpu")
         model.to(device)
@@ -225,7 +227,7 @@ class CustomServer:
                 outputs, attns = model(inputs, return_attn=True)
                 outputs = m(outputs)
                 loss = criterion(outputs, ensembled_logits[i * self.args.batch_size:(i + 1) * self.args.batch_size].to(device))
-                loss2 = criterion2(total_attns[:, i * self.args.batch_size:(i + 1) * self.args.batch_size].to(device), attns)
+                loss2 = criterion2(total_attns[:, i * self.args.batch_size:(i + 1) * self.args.batch_size].to(device), attns, sim_weights)
                 lambda_ = 0.09
                 total_loss = (1-lambda_) * loss + lambda_ * loss2
                 total_loss.backward()

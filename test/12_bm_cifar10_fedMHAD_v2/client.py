@@ -39,6 +39,7 @@ class CustomClient(fl.client.NumPyClient):
         self.args = args
         self.save_path = f"checkpoints/{args.port}/client_{args.index}_best_models"
         self.early_stopper = EarlyStopper(patience=10, delta=1e-4, checkpoint_dir=self.save_path)
+        self.class_counts = self.getClassCounts(self.trainset)
     
     # def get_properties(self, config: Config) -> Dict[str, Scalar]:
     #     ret = super().get_properties(config)
@@ -47,6 +48,10 @@ class CustomClient(fl.client.NumPyClient):
     
     # def get_parameters(self, config: Config) -> NDArrays:
     #     return [val.cpu().numpy() for _, val in model.state_dict().items()]
+    def getClassCounts(self, dataset):
+        counts = np.bincount([dataset[i][1] for i in range(len(dataset))])
+        counts = {i: counts[i] for i in range(len(counts))}
+        return counts
     
     def set_parameters(self, parameters):
         utils.print_func_and_line()
@@ -100,7 +105,8 @@ class CustomClient(fl.client.NumPyClient):
         
         parameters_prime = utils.get_model_params(model)
         num_examples_train = len(trainset)
-
+        
+        results.update(self.class_counts)
         return parameters_prime, num_examples_train, results
 
     def evaluate(self, parameters, config):
@@ -149,8 +155,8 @@ def client_dry_run(experiment: Optional[Experiment] = None
 def init_argurments():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Start Flower server with experiment key.")
-    parser.add_argument("--index", type=int, required=True, help="Index of the client")
-    parser.add_argument("--experiment_key", type=str, required=True, help="Experiment key")
+    parser.add_argument("--index", type=int, default=0, required=False, help="Index of the client")
+    parser.add_argument("--experiment_key", type=str, default="test_key", required=False, help="Experiment key")
     parser.add_argument("--toy", type=bool, default=False, required=False, help="Set to true to use only 10 datasamples for validation. Useful for testing purposes. Default: False" )
     parser.add_argument("--use_cuda", type=bool, default=True, required=False, help="Set to true to use GPU. Default: False" )
     parser.add_argument("--partition", type=int, default=0, choices=range(0, 10), required=False, help="Specifies the artificial data partition of CIFAR10 to be used. Picks partition 0 by default" )
@@ -211,7 +217,8 @@ def main() -> None:
             cifar10_partition = Cifar10Partition(args)
             utils.print_func_and_line()
             trainset, testset = cifar10_partition.load_partition(args.index)
-            # num_of_data_per_class = cifar10_partition.get_num_of_data_per_class(trainset)
+            num_of_data_per_class = cifar10_partition.get_num_of_data_per_class(trainset)
+            print(f"Number of data per class: {num_of_data_per_class}")
         else:
             utils.print_func_and_line()
             pascal_voc_partition = PascalVocPartition(args)

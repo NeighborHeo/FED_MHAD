@@ -164,13 +164,11 @@ class Cifar10Partition:
         else :
             print("CIFAR10 dataset is not found.")
         
-        self.alpha = 0.1
-        self.N_class = 10
-        self.N_parties = 20
+        print("N_parties: ", self.args.N_parties, "N_class: ", self.args.num_classes, "alpha: ", self.args.alpha)
         self.partition_indices = self.init_partition()
         
     def init_partition(self):
-        self.split_data = get_dirichlet_split_data(self.train_images, self.train_labels, self.N_parties, self.N_class, self.alpha)
+        self.split_data = get_dirichlet_split_data(self.train_images, self.train_labels, self.args.N_parties, self.args.num_classes, self.args.alpha)
         
     def load_partition(self, i: int):
         if i == -1:
@@ -180,7 +178,7 @@ class Cifar10Partition:
         
         # 데이터셋 생성
         trainset = mydataset(self.train_images[self.split_data[i]["idx"]], self.train_labels[self.split_data[i]["idx"]])
-        len_test = int(len(self.test_labels) / self.N_parties)
+        len_test = int(len(self.test_labels) / self.args.N_parties)
         testset = mydataset(self.test_images[range(i*len_test, (i+1)*len_test)], self.test_labels[range(i*len_test, (i+1)*len_test)])
         return trainset, testset
     
@@ -319,12 +317,25 @@ class Test_PascalVocPartition(unittest.TestCase):
     def test_cifar10(self):
         args = argparse.Namespace()
         args.datapath = '~/.data'
-        args.N_parties = 5
-        args.alpha = 0.1    
+        args.N_parties = 20
+        args.num_classes = 10
+        args.alpha = 1.0
         args.task = 'multilabel'
         args.batch_size = 16
         cifar10 = Cifar10Partition(args)
         train_dataset, test_dataset = cifar10.load_partition(0)
+        for i in range(20):
+            train_dataset, test_dataset = cifar10.load_partition(i)
+            folder_path = pathlib.Path(args.datapath).expanduser() / 'cifar10' / f'cifar10_train_224_ap_{args.alpha}'
+            folder_path.mkdir(parents=True, exist_ok=True)
+            np.save(folder_path / f'Party_{i}_X_data.npy', train_dataset.img)
+            np.save(folder_path / f'Party_{i}_y_data.npy', train_dataset.gt)
+            folder_path = pathlib.Path(args.datapath).expanduser() / 'cifar10' / f'cifar10_test_224_ap_{args.alpha}'
+            folder_path.mkdir(parents=True, exist_ok=True)
+            np.save(folder_path / f'Party_{i}_X_data.npy', test_dataset.img)
+            np.save(folder_path / f'Party_{i}_y_data.npy', test_dataset.gt)
+            
+            
         # train_dataset, test_dataset = cifar10.load_partition(1)
         # train_dataset, test_dataset = cifar10.load_partition(2)
         # train_dataset, test_dataset = cifar10.load_partition(3)

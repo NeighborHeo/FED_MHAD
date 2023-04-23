@@ -259,7 +259,7 @@ def init_argurments() -> argparse.Namespace:
     parser.add_argument("--weight_decay", type=float, default=1e-5, required=False, help="Weight decay. Default: 1e-5")
     parser.add_argument("--batch_size", type=int, default=32, required=False, help="Batch size. Default: 32")
     parser.add_argument("--datapath", type=str, default="~/.data/", required=False, help="dataset path")
-    parser.add_argument("--alpha", type=float, default=0., required=False, help="alpha")
+    parser.add_argument("--alpha", type=float, default=0.1, required=False, help="alpha")
     parser.add_argument("--seed", type=int, default=1, required=False, help="seed")
     parser.add_argument("--num_rounds", type=int, default=100, required=False, help="Number of rounds to run. Default: 100")
     parser.add_argument("--dataset", type=str, default="cifar10", required=False, help="Dataset to use. Default: pascal_voc")

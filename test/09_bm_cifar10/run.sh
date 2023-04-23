@@ -12,6 +12,7 @@ export PYTHONPATH="$PYTHONPATH:$SCRIPT_DIR"
 experiment_key=$(openssl rand -base64 48 | sed 's/[^a-zA-Z0-9]//g')
 echo $experiment_key
 
+GPU_ID=0
 port=$(python -c "import random; print(random.randint(10000, 65535))")
 echo $port
 
@@ -22,14 +23,14 @@ echo $port
 python -c "import torch; torch.hub.load( 'NVIDIA/DeepLearningExamples:torchhub', 'nvidia_efficientnet_b0', pretrained=True)"
 
 echo "Starting server"
-python server.py \
+CUDA_VISIBLE_DEVICES=$GPU_ID python server.py \
     --experiment_key "$experiment_key" \
     --port "$port" &
 sleep 10  # Sleep for 3s to give the server enough time to start
 
 for i in `seq 0 19`; do
     echo "Starting client $i"
-    python client.py \
+    CUDA_VISIBLE_DEVICES=$GPU_ID python client.py \
         --index "$i" \
         --experiment_key "$experiment_key" \
         --port "$port" &

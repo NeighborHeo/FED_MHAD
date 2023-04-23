@@ -5,12 +5,13 @@ import flwr as fl
 import argparse
 from collections import OrderedDict
 
-from typing import Optional
+from typing import Optional, Dict, List
 import warnings
 import utils
 from model import vit_tiny_patch16_224
 from dataset import PascalVocPartition, Cifar10Partition
 from early_stopper import EarlyStopper
+
 
 warnings.filterwarnings("ignore")
 
@@ -48,6 +49,7 @@ class CustomClient(fl.client.NumPyClient):
         # save file 
         model.load_state_dict(state_dict, strict=True)
         return model
+    
 
     def fit(self, parameters, config):
         """Train parameters on the locally held training set."""
@@ -61,7 +63,6 @@ class CustomClient(fl.client.NumPyClient):
         server_round: int = config["server_round"]
 
         n_valset = int(len(self.trainset) * self.validation_split)
-        print(f"n_valset: {n_valset}")
 
         valset = torch.utils.data.Subset(self.trainset, range(0, n_valset))
         trainset = torch.utils.data.Subset(

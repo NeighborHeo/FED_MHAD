@@ -12,9 +12,9 @@ import copy
 from dataset import PascalVocPartition, Cifar10Partition
 from model import vit_tiny_patch16_224
 from early_stopper import EarlyStopper
-from fedmhad import FedMHAD
+from feddf import FedDF
 from mha_loss import MHALoss
-from flwr.common import (parameters_to_ndarrays, ndarrays_to_parameters, FitRes, MetricsAggregationFn, NDArrays, Parameters, Scalar)
+from flwr.common import (parameters_to_ndarrays, ndarrays_to_parameters, FitRes, MetricsAggregationFn, NDArrays, Parameters, Scalar, Config)
 from flwr.server.client_proxy import ClientProxy
 from flwr.server.strategy.aggregate import aggregate
 import warnings
@@ -33,7 +33,7 @@ class CustomServer:
         self.experiment = experiment
         self.args = args  # add this line to save args as an instance attribute
         self.save_path = f"checkpoints/{args.port}/global"
-        self.early_stopper = EarlyStopper(patience=5, delta=1e-4, checkpoint_dir=self.save_path)
+        self.early_stopper = EarlyStopper(patience=10, delta=1e-4, checkpoint_dir=self.save_path)
         self.strategy = self.create_strategy(model, args.toy)
         self.model = model
         
@@ -60,6 +60,7 @@ class CustomServer:
         elif self.args.dataset == "cifar10":
             partition = Cifar10Partition(args=self.args)
         trainset, testset = partition.load_partition(-1)
+        print(f"len(trainset) : {len(trainset)}, len(testset) : {len(testset)}")
         n_train = len(testset)
         if toy:
             valset = torch.utils.data.Subset(testset, range(n_train - 10, n_train))
@@ -93,6 +94,7 @@ class CustomServer:
             if self.experiment is not None and server_round != 0:
                 result = {f"test_" + k: v for k, v in result.items()}
                 self.experiment.log_metrics(result, step=server_round)
+                
             print(f"result: {result}")
             
             return float(loss), {"accuracy": float(accuracy)}
@@ -114,9 +116,9 @@ class CustomServer:
         publicLoader = DataLoader(publicset, batch_size=self.args.batch_size)
         return publicLoader
     
-    def get_properties(self, config: Config) -> Dict[str, Scalar]:
-        # return
-        return super().get_properties(config)
+    # def get_properties(self, config: Config) -> Dict[str, Scalar]:
+    #     # return
+    #     return super().get_properties(config)
 
     def load_parameter(self, model: torch.nn.Module, parameters: fl.common.NDArrays)-> torch.nn.Module:
         state_dict = OrderedDict({k: torch.tensor(v) for k, v in zip(model.state_dict().keys(), parameters)})
@@ -139,16 +141,14 @@ class CustomServer:
         model.eval()
 
         logits_list = []
-        total_attns = []
         m = torch.nn.Sigmoid()
         with torch.no_grad():
             for inputs, _ in publicLoader:
                 inputs = inputs.to(device)
-                logits, attn = model(inputs, return_attn=True)
+                logits = model(inputs, return_attn=False)
                 logits_list.append(m(logits).detach())
-                total_attns.append(attn.detach())
 
-        return torch.cat(logits_list, dim=0), torch.cat(total_attns, dim=0)
+        return torch.cat(logits_list, dim=0)
 
     def ensemble_logits(self, logits_list: List[torch.Tensor]) -> torch.Tensor:
         """Ensemble logits from multiple models."""
@@ -164,36 +164,30 @@ class CustomServer:
         publicLoader = self.load_public_loader()
         fedavg_model = self.get_fedavg_model(results)
 
-        def process(fit_res):
-            copied_model = copy.deepcopy(self.model)
-            copied_model = self.load_parameter(copied_model, parameters_to_ndarrays(fit_res.parameters))
-            logits, attns = self.get_logits_and_attns(copied_model, publicLoader)
-            return logits, attns
-        with multiprocessing.Pool(processes=4) as pool:
-            results = list(tqdm(pool.imap(process, [fit_res for _, fit_res in results]), total=len(results)))
-        logits_list = [logits for logits, _ in results]
-        attns_list = [attns for _, attns in results]
-        total_attns = torch.stack(attns_list, dim=0)
-        
-        # logits_list = []
-        # attns_list = []
-        # for _, fit_res in tqdm(results):
+        # def process(fit_res):
         #     copied_model = copy.deepcopy(self.model)
         #     copied_model = self.load_parameter(copied_model, parameters_to_ndarrays(fit_res.parameters))
-        #     logits, attns = self.get_logits_and_attns(copied_model, publicLoader)
-        #     logits_list.append(logits)
-        #     attns_list.append(attns)
-        # total_attns = torch.stack(attns_list, dim=0)
-        # Step 2: Ensemble logits
+        #     logits = self.get_logits_and_attns(copied_model, publicLoader)
+        #     return logits
+        # with multiprocessing.Pool(processes=4) as pool:
+        #     results = list(pool.imap(process, [fit_res for _, fit_res in results]), total=len(results))
+        #     logits_list = [logits for logits in results]
+        
+        logits_list = []
+        for _, fit_res in tqdm(results):
+            copied_model = copy.deepcopy(self.model)
+            copied_model = self.load_parameter(copied_model, parameters_to_ndarrays(fit_res.parameters))
+            logits = self.get_logits_and_attns(copied_model, publicLoader)
+            logits_list.append(logits)
         ensembled_logits = self.ensemble_logits(logits_list)
 
         # Step 3: Distill logits
-        distilled_model = self.distill_training(fedavg_model, ensembled_logits, total_attns, publicLoader)
+        distilled_model = self.distill_training(fedavg_model, ensembled_logits, publicLoader)
         distilled_parameters = [val.cpu().numpy() for _, val in distilled_model.state_dict().items()]
 
         return distilled_parameters
 
-    def distill_training(self, model: torch.nn.Module, ensembled_logits: torch.Tensor, total_attns: torch.Tensor, publicLoader: DataLoader) -> torch.nn.Module:
+    def distill_training(self, model: torch.nn.Module, ensembled_logits: torch.Tensor, publicLoader: DataLoader) -> torch.nn.Module:
         """Perform distillation training."""
         device = torch.device("cuda:0" if torch.cuda.is_available() and self.args.use_cuda else "cpu")
         model.to(device)
@@ -217,20 +211,16 @@ class CustomServer:
                 outputs, attns = model(inputs, return_attn=True)
                 outputs = m(outputs)
                 loss = criterion(outputs, ensembled_logits[i * self.args.batch_size:(i + 1) * self.args.batch_size].to(device))
-                loss2 = criterion2(total_attns[:, i * self.args.batch_size:(i + 1) * self.args.batch_size].to(device), attns)
-                lambda_ = 0.09
-                total_loss = (1-lambda_) * loss + lambda_ * loss2
-                total_loss.backward()
+                loss.backward()
                 optimizer.step()
-
-                running_loss += total_loss.item()
+                running_loss += loss.item()
             print(f"Distillation Epoch {epoch + 1}/{self.args.local_epochs}, Loss: {running_loss / len(publicLoader)}")
         return model
             
     def create_strategy(self, model: torch.nn.Module, toy: bool):
         model_parameters = [val.cpu().numpy() for _, val in model.state_dict().items()]
         print("create_strategy")
-        return fl.server.strategy.FedAvg(
+        return FedDF(
             fraction_fit=0.4,
             fraction_evaluate=0.4,
             min_fit_clients=8,
@@ -239,8 +229,20 @@ class CustomServer:
             evaluate_fn=self.get_evaluate_fn(model, toy),
             on_fit_config_fn=self.fit_config,
             on_evaluate_config_fn=self.evaluate_config,
+            fit_aggregation_fn=self.fit_aggregation_fn,
             initial_parameters=fl.common.ndarrays_to_parameters(model_parameters),
         )
+        # return fl.server.strategy.FedAvg(
+        #     fraction_fit=0.4,
+        #     fraction_evaluate=0.4,
+        #     min_fit_clients=8,
+        #     min_evaluate_clients=8,
+        #     min_available_clients=8,
+        #     evaluate_fn=self.get_evaluate_fn(model, toy),
+        #     on_fit_config_fn=self.fit_config,
+        #     on_evaluate_config_fn=self.evaluate_config,
+        #     initial_parameters=fl.common.ndarrays_to_parameters(model_parameters),
+        # )
 
     def start_server(self, port: int, num_rounds: int):
         
@@ -263,9 +265,9 @@ def init_argurments() -> argparse.Namespace:
     parser.add_argument("--weight_decay", type=float, default=1e-5, required=False, help="Weight decay. Default: 1e-5")
     parser.add_argument("--batch_size", type=int, default=32, required=False, help="Batch size. Default: 32")
     parser.add_argument("--datapath", type=str, default="~/.data/", required=False, help="dataset path")
-    parser.add_argument("--alpha", type=float, default=0., required=False, help="alpha")
+    parser.add_argument("--alpha", type=float, default=0.1, required=False, help="alpha")
     parser.add_argument("--seed", type=int, default=1, required=False, help="seed")
-    parser.add_argument("--num_rounds", type=int, default=100, required=False, help="Number of rounds to run. Default: 100")
+    parser.add_argument("--num_rounds", type=int, default=30, required=False, help="Number of rounds to run. Default: 100")
     parser.add_argument("--dataset", type=str, default="cifar10", required=False, help="Dataset to use. Default: pascal_voc")
     parser.add_argument("--num_classes", type=int, default=10, required=False, help="Number of classes. Default: 10")
     parser.add_argument("--N_parties", type=int, default=20, required=False, help="Number of clients to use. Default: 10")

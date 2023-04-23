@@ -25,7 +25,7 @@ echo "Starting server"
 CUDA_VISIBLE_DEVICES=1 python server.py \
     --experiment_key "$experiment_key" \
     --port "$port" &
-sleep 10  # Sleep for 3s to give the server enough time to start
+sleep 5  # Sleep for 3s to give the server enough time to start
 
 for i in `seq 0 19`; do
     echo "Starting client $i"

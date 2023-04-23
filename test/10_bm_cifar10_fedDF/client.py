@@ -38,31 +38,33 @@ class CustomClient(fl.client.NumPyClient):
         self.experiment = experiment
         self.args = args
         self.save_path = f"checkpoints/{args.port}/client_{args.index}_best_models"
-        self.early_stopper = EarlyStopper(patience=5, delta=1e-4, checkpoint_dir=self.save_path)
-        self.model = vit_tiny_patch16_224(pretrained=True, num_classes=self.args.num_classes)
+        self.early_stopper = EarlyStopper(patience=10, delta=1e-4, checkpoint_dir=self.save_path)
     
     # def get_properties(self, config: Config) -> Dict[str, Scalar]:
     #     ret = super().get_properties(config)
     #     ret["my_custom_property"] = 42.0
     #     return ret
     
-    def get_parameters(self, config: Config) -> NDArrays:
-        return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
+    # def get_parameters(self, config: Config) -> NDArrays:
+    #     return [val.cpu().numpy() for _, val in model.state_dict().items()]
     
     def set_parameters(self, parameters):
+        utils.print_func_and_line()
         """Loads a efficientnet model and replaces it parameters with the ones
         given."""
-        params_dict = zip(self.model.state_dict().keys(), parameters)
+        model = vit_tiny_patch16_224(pretrained=True, num_classes=self.args.num_classes)
+        params_dict = zip(model.state_dict().keys(), parameters)
         state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
         # save file 
-        self.model.load_state_dict(state_dict, strict=True)
-        return self.model
+        model.load_state_dict(state_dict, strict=True)
+        return model
 
     def fit(self, parameters, config):
+        utils.print_func_and_line()
         """Train parameters on the locally held training set."""
 
         # Update local model parameters
-        self.model = self.set_parameters(parameters)
+        model = self.set_parameters(parameters)
 
         # Get hyperparameters for this round
         batch_size: int = config["batch_size"]
@@ -80,14 +82,14 @@ class CustomClient(fl.client.NumPyClient):
         valLoader = DataLoader(valset, batch_size=batch_size)
 
         device = torch.device("cuda:0" if torch.cuda.is_available() and self.args.use_cuda else "cpu")
-        results = utils.train(self.model, trainLoader, valLoader, epochs, device, self.args)
+        results = utils.train(model, trainLoader, valLoader, epochs, device, self.args)
         
         accuracy = results["val_accuracy"]
         loss = results["val_loss"]
         is_best_accuracy = self.early_stopper.is_best_accuracy(accuracy)
         if is_best_accuracy:
             filename = f"model_round{server_round}_acc{accuracy:.2f}_loss{loss:.2f}.pth"
-            self.early_stopper.save_checkpoint(self.model, server_round, loss, accuracy, filename)
+            self.early_stopper.save_checkpoint(model, server_round, loss, accuracy, filename)
 
         if self.early_stopper.counter >= self.early_stopper.patience:
             print(f"Early stopping : {self.early_stopper.counter} >= {self.early_stopper.patience}")
@@ -96,15 +98,16 @@ class CustomClient(fl.client.NumPyClient):
         if self.experiment is not None:
             self.experiment.log_metrics(results, step=server_round)
         
-        parameters_prime = utils.get_model_params(self.model)
+        parameters_prime = utils.get_model_params(model)
         num_examples_train = len(trainset)
 
         return parameters_prime, num_examples_train, results
 
     def evaluate(self, parameters, config):
+        utils.print_func_and_line()
         """Evaluate parameters on the locally held test set."""
         # Update local model parameters
-        self.model = self.set_parameters(parameters)
+        model = self.set_parameters(parameters)
 
         # Get config values
         steps: int = config["val_steps"]
@@ -114,7 +117,7 @@ class CustomClient(fl.client.NumPyClient):
         testloader = DataLoader(self.testset, batch_size=16)
 
         device = torch.device("cuda:0" if torch.cuda.is_available() and self.args.use_cuda else "cpu")
-        result = utils.test(self.model, testloader, steps, device, self.args)
+        result = utils.test(model, testloader, steps, device, self.args)
         accuracy = result["acc"]
         loss = result["loss"]
         result = {f"test_" + k: v for k, v in result.items()}
@@ -146,8 +149,8 @@ def client_dry_run(experiment: Optional[Experiment] = None
 def init_argurments():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Start Flower server with experiment key.")
-    parser.add_argument("--index", type=int, default=0, required=False, help="Index of the client")
-    parser.add_argument("--experiment_key", type=str, default="test key", required=False, help="Experiment key")
+    parser.add_argument("--index", type=int, required=True, help="Index of the client")
+    parser.add_argument("--experiment_key", type=str, required=True, help="Experiment key")
     parser.add_argument("--toy", type=bool, default=False, required=False, help="Set to true to use only 10 datasamples for validation. Useful for testing purposes. Default: False" )
     parser.add_argument("--use_cuda", type=bool, default=True, required=False, help="Set to true to use GPU. Default: False" )
     parser.add_argument("--partition", type=int, default=0, choices=range(0, 10), required=False, help="Specifies the artificial data partition of CIFAR10 to be used. Picks partition 0 by default" )
@@ -158,9 +161,9 @@ def init_argurments():
     parser.add_argument("--weight_decay", type=float, default=1e-4, required=False, help="Weight decay. Default: 1e-4")
     parser.add_argument("--batch_size", type=int, default=32, required=False, help="Batch size. Default: 32")
     parser.add_argument("--datapath", type=str, default="~/.data/", required=False, help="dataset path")
-    parser.add_argument("--alpha", type=float, default=0.5, required=False, help="alpha")
+    parser.add_argument("--alpha", type=float, default=0.1, required=False, help="alpha")
     parser.add_argument("--seed", type=int, default=1, required=False, help="seed")
-    parser.add_argument("--num_rounds", type=int, default=100, required=False, help="Number of rounds to run. Default: 100")
+    parser.add_argument("--num_rounds", type=int, default=30, required=False, help="Number of rounds to run. Default: 100")
     parser.add_argument("--dataset", type=str, default="cifar10", required=False, help="Dataset to use. Default: pascal_voc")
     parser.add_argument("--num_classes", type=int, default=10, required=False, help="Number of classes. Default: 10")
     parser.add_argument("--N_parties", type=int, default=20, required=False, help="Number of clients to use. Default: 10")
@@ -191,10 +194,12 @@ def test_load_cifar10_partition():
 
 def main() -> None:
     utils.set_seed(42)
-    
+    utils.print_func_and_line()
     args = init_argurments()
+    utils.print_func_and_line()
     experiment = init_comet_experiment(args)
-
+    utils.print_func_and_line()
+    
     if args.dry:
         client_dry_run(experiment, args)
     else:
@@ -202,11 +207,15 @@ def main() -> None:
         # trainset, testset = utils.load_partition(args.index)
         
         if args.dataset == "cifar10":
+            utils.print_func_and_line()
             cifar10_partition = Cifar10Partition(args)
+            utils.print_func_and_line()
             trainset, testset = cifar10_partition.load_partition(args.index)
-            num_of_data_per_class = cifar10_partition.get_num_of_data_per_class(trainset)
+            # num_of_data_per_class = cifar10_partition.get_num_of_data_per_class(trainset)
         else:
+            utils.print_func_and_line()
             pascal_voc_partition = PascalVocPartition(args)
+            utils.print_func_and_line()
             trainset, testset = pascal_voc_partition.load_partition(args.index)
             
         if args.toy:
@@ -214,7 +223,9 @@ def main() -> None:
             testset = torch.utils.data.Subset(testset, range(10))
 
         # Start Flower client
+        utils.print_func_and_line()
         client = CustomClient(trainset, testset, 0.1, experiment, args)
+        utils.print_func_and_line()
         fl.client.start_numpy_client(server_address=f"0.0.0.0:{args.port}", client=client)
 
     experiment.end()

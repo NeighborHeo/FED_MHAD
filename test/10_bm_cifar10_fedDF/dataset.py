@@ -14,6 +14,7 @@ from PIL import Image
 import unittest
 import os
 import inspect
+import utils
 
 transform_train = transforms.Compose([
     transforms.Resize(224),
@@ -147,39 +148,29 @@ def plot_whole_y_distribution(y_data):
 
 class Cifar10Partition: 
     def __init__(self, args: argparse.Namespace):
+        utils.print_func_and_line()
         self.args = args
-        file_path = pathlib.Path(args.datapath).expanduser() / 'cifar10'/ 'cifar10_train_224_images.npy'
-        if file_path.exists():
-            train_images = np.load(pathlib.Path(args.datapath).expanduser() / 'cifar10' / 'cifar10_train_224_images.npy')
-            train_labels = np.load(pathlib.Path(args.datapath).expanduser() / 'cifar10' / 'cifar10_train_224_labels.npy')
-            include_idx, exclude_idx, _, _ = train_test_split(np.arange(0, len(train_labels)), np.arange(0, len(train_labels)), train_size=0.1, random_state=42, stratify=train_labels)
-            self.train_images = train_images[include_idx]
-            self.train_labels = train_labels[include_idx]
-            
-            test_images = np.load(pathlib.Path(args.datapath).expanduser() / 'cifar10' / 'cifar10_test_224_images.npy')
-            test_labels = np.load(pathlib.Path(args.datapath).expanduser() / 'cifar10' / 'cifar10_test_224_labels.npy')
-            include_idx, exclude_idx, _, _ = train_test_split(np.arange(0, len(test_labels)), np.arange(0, len(test_labels)), train_size=0.1, random_state=42, stratify=test_labels)
-            self.test_images = test_images[include_idx]
-            self.test_labels = test_labels[include_idx]
-        else :
-            print("CIFAR10 dataset is not found.")
-        
-        print("N_parties: ", self.args.N_parties, "N_class: ", self.args.num_classes, "alpha: ", self.args.alpha)
-        self.partition_indices = self.init_partition()
+        # print("N_parties: ", self.args.N_parties, "N_class: ", self.args.num_classes, "alpha: ", self.args.alpha)
+        # self.partition_indices = self.init_partition()
         
     def init_partition(self):
+        utils.print_func_and_line()
         self.split_data = get_dirichlet_split_data(self.train_images, self.train_labels, self.args.N_parties, self.args.num_classes, self.args.alpha)
         
     def load_partition(self, i: int):
-        if i == -1:
-            trainset = mydataset(self.train_images, self.train_labels)
-            testset = mydataset(self.test_images, self.test_labels)
-            return trainset, testset
-        
-        # 데이터셋 생성
-        trainset = mydataset(self.train_images[self.split_data[i]["idx"]], self.train_labels[self.split_data[i]["idx"]])
-        len_test = int(len(self.test_labels) / self.args.N_parties)
-        testset = mydataset(self.test_images[range(i*len_test, (i+1)*len_test)], self.test_labels[range(i*len_test, (i+1)*len_test)])
+        utils.print_func_and_line()
+        train_folder_path = pathlib.Path(self.args.datapath).expanduser() / 'cifar10' / f'cifar10_train_224_ap_{self.args.alpha}'
+        test_folder_path = pathlib.Path(self.args.datapath).expanduser() / 'cifar10' / f'cifar10_test_224_ap_{self.args.alpha}'
+        if not train_folder_path.exists() or not test_folder_path.exists():
+            print("No such directory: ", train_folder_path, " or ", test_folder_path)
+        else : 
+            self.train_images = np.load(train_folder_path / f'Party_{i}_X_data.npy')
+            self.train_labels = np.load(train_folder_path / f'Party_{i}_y_data.npy')
+            self.test_images = np.load(test_folder_path / f'Party_{i}_X_data.npy')
+            self.test_labels = np.load(test_folder_path / f'Party_{i}_y_data.npy')
+        print("train_images: ", self.train_images.shape, "train_labels: ", self.train_labels.shape)
+        trainset = mydataset(self.train_images, self.train_labels)
+        testset = mydataset(self.test_images, self.test_labels)
         return trainset, testset
     
     def get_num_of_data_per_class(self, dataset):
@@ -319,21 +310,23 @@ class Test_PascalVocPartition(unittest.TestCase):
         args.datapath = '~/.data'
         args.N_parties = 20
         args.num_classes = 10
-        args.alpha = 1.0
+        args.alpha = 0.1
         args.task = 'multilabel'
         args.batch_size = 16
         cifar10 = Cifar10Partition(args)
         train_dataset, test_dataset = cifar10.load_partition(0)
         for i in range(20):
             train_dataset, test_dataset = cifar10.load_partition(i)
+            print(f"client {i}_size of train partition: ", len(train_dataset), "images / ", "test partition: ", len(test_dataset), "images")
             folder_path = pathlib.Path(args.datapath).expanduser() / 'cifar10' / f'cifar10_train_224_ap_{args.alpha}'
             folder_path.mkdir(parents=True, exist_ok=True)
-            np.save(folder_path / f'Party_{i}_X_data.npy', train_dataset.img)
-            np.save(folder_path / f'Party_{i}_y_data.npy', train_dataset.gt)
+            # np.save(folder_path / f'Party_{i}_X_data.npy', train_dataset.img)
+            # np.save(folder_path / f'Party_{i}_y_data.npy', train_dataset.gt)
+            
             folder_path = pathlib.Path(args.datapath).expanduser() / 'cifar10' / f'cifar10_test_224_ap_{args.alpha}'
             folder_path.mkdir(parents=True, exist_ok=True)
-            np.save(folder_path / f'Party_{i}_X_data.npy', test_dataset.img)
-            np.save(folder_path / f'Party_{i}_y_data.npy', test_dataset.gt)
+            # np.save(folder_path / f'Party_{i}_X_data.npy', test_dataset.img)
+            # np.save(folder_path / f'Party_{i}_y_data.npy', test_dataset.gt)
             
             
         # train_dataset, test_dataset = cifar10.load_partition(1)

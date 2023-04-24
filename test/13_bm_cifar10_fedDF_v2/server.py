@@ -141,16 +141,14 @@ class CustomServer:
         model.eval()
 
         logits_list = []
-        total_attns = []
         m = torch.nn.Sigmoid()
         with torch.no_grad():
             for inputs, _ in publicLoader:
                 inputs = inputs.to(device)
-                logits, attn = model(inputs, return_attn=True)
+                logits = model(inputs, return_attn=False)
                 logits_list.append(m(logits).detach())
-                total_attns.append(attn.detach())
 
-        return torch.cat(logits_list, dim=0), torch.cat(total_attns, dim=0)
+        return torch.cat(logits_list, dim=0)
 
     def ensemble_logits(self, logits_list: List[torch.Tensor]) -> torch.Tensor:
         """Ensemble logits from multiple models."""
@@ -180,31 +178,27 @@ class CustomServer:
         #     logits_list = [logits for logits in results]
         
         logits_list = []
-        attns_list = []
         class_counts = []
         for _, fit_res in tqdm(results):
             copied_model = copy.deepcopy(self.model)
             copied_model = self.load_parameter(copied_model, parameters_to_ndarrays(fit_res.parameters))
-            logits, attns = self.get_logits_and_attns(copied_model, publicLoader)
+            logits = self.get_logits_and_attns(copied_model, publicLoader)
             logits_list.append(logits)
-            attns_list.append(attns)
             class_counts.append(self.get_class_count_from_dict(fit_res.metrics))
         total_logits = torch.stack(logits_list, dim=0)
-        total_attns = torch.stack(attns_list, dim=0)
         class_counts = torch.stack(class_counts, dim=0)
         
         # Step 2: Ensemble logits
         logit_weights = class_counts / class_counts.sum(dim=0, keepdim=True)
         ensembled_logits = utils.compute_ensemble_logits(total_logits, logit_weights)
-        sim_weights = utils.calculate_normalized_similarity_weights(ensembled_logits, total_logits, "cosine")
             
         # Step 3: Distill logits
-        distilled_model = self.distill_training(fedavg_model, ensembled_logits, total_attns, sim_weights, publicLoader)
+        distilled_model = self.distill_training(fedavg_model, ensembled_logits, publicLoader)
         distilled_parameters = [val.cpu().numpy() for _, val in distilled_model.state_dict().items()]
 
         return distilled_parameters
 
-    def distill_training(self, model: torch.nn.Module, ensembled_logits: torch.Tensor, total_attns: torch.Tensor, sim_weights: torch.Tensor, publicLoader: DataLoader) -> torch.nn.Module:
+    def distill_training(self, model: torch.nn.Module, ensembled_logits: torch.Tensor, publicLoader: DataLoader) -> torch.nn.Module:
         """Perform distillation training."""
         device = torch.device("cuda:0" if torch.cuda.is_available() and self.args.use_cuda else "cpu")
         model.to(device)
@@ -228,13 +222,10 @@ class CustomServer:
                 outputs, attns = model(inputs, return_attn=True)
                 outputs = m(outputs)
                 loss = criterion(outputs, ensembled_logits[i * self.args.batch_size:(i + 1) * self.args.batch_size].to(device))
-                loss2 = criterion2(total_attns[:, i * self.args.batch_size:(i + 1) * self.args.batch_size].to(device), attns, sim_weights)
-                lambda_ = 0.09
-                total_loss = (1-lambda_) * loss + lambda_ * loss2
-                total_loss.backward()
+                loss.backward()
                 optimizer.step()
 
-                running_loss += total_loss.item()
+                running_loss += loss.item()
             print(f"Distillation Epoch {epoch + 1}/{self.args.local_epochs}, Loss: {running_loss / len(publicLoader)}")
         return model
             

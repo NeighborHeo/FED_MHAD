@@ -153,7 +153,6 @@ class MHALoss(torch.nn.Module):
         else:
             self.weight = torch.ones(self.num_clients, dtype=torch.float)
         
-        print('client_attentions : ', client_attentions.shape)
         client_attentions = client_attentions[:, :, 0:self.distill_heads, :, :]
         central_attention = central_attention[:, 0:self.distill_heads, :, :]
         # assert len(clients_output) == self.num_clients, "Number of clients_output should match num_clients"

@@ -294,10 +294,10 @@ def vit_tiny_patch16_224(pretrained=False, patch_size=16, num_heads=3, **kwargs)
         #     name = i.replace("head.","")  # change key that doesn't match
         #     temp[name] = j
         # model.load_state_dict(temp, strict=False)
+        num_classes = kwargs['num_classes'] if 'num_classes' in kwargs else 20
         
-        temp_model = timm.create_model('vit_tiny_patch16_224', pretrained=True, num_classes=20)
+        temp_model = timm.create_model('vit_tiny_patch16_224', pretrained=True, num_classes=num_classes)
         m, u = model.load_state_dict(temp_model.state_dict(), strict=False)
-        print(m, u)
     return model
 
 def vit_small_patch16_224(pretrained=False, patch_size=16, num_heads=6, **kwargs):
@@ -309,6 +309,7 @@ def vit_small_patch16_224(pretrained=False, patch_size=16, num_heads=6, **kwargs
         #     url="https://dl.fbaipublicfiles.com/deit/deit_small_patch16_224-cd65a155.pth",
         #     map_location="cpu", check_hash=True
         # )
+        
         # # model.load_state_dict(checkpoint["model"])
         # state_dict = checkpoint["model"]
         # temp = OrderedDict()
@@ -316,10 +317,9 @@ def vit_small_patch16_224(pretrained=False, patch_size=16, num_heads=6, **kwargs
         #     name = i.replace("head.","")  # change key that doesn't match
         #     temp[name] = j
         # model.load_state_dict(temp, strict=False)
-        
-        temp_model = timm.create_model('vit_small_patch16_224', pretrained=True, num_classes=20)
+        num_classes = kwargs['num_classes'] if 'num_classes' in kwargs else 20
+        temp_model = timm.create_model('vit_small_patch16_224', pretrained=True, num_classes=num_classes)
         m, u = model.load_state_dict(temp_model.state_dict(), strict=False)
-        print(m, u)
     return model
 
 def vit_base_patch16_224(pretrained=False, patch_size=16, num_heads=12, **kwargs):
@@ -332,8 +332,7 @@ def vit_base_patch16_224(pretrained=False, patch_size=16, num_heads=12, **kwargs
         #     map_location="cpu", check_hash=True
         # )
         # model.load_state_dict(checkpoint["model"])
-        
-        temp_model = timm.create_model('vit_base_patch16_224', pretrained=True, num_classes=20)
+        num_classes = kwargs['num_classes'] if 'num_classes' in kwargs else 20
+        temp_model = timm.create_model('vit_base_patch16_224', pretrained=True, num_classes=num_classes)
         m, u = model.load_state_dict(temp_model.state_dict(), strict=False)
-        print(m, u)
     return model

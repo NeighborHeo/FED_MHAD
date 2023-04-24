@@ -9,16 +9,18 @@ from torch.utils.data import DataLoader
 import flwr as fl
 import utils
 import copy
-from dataset import PascalVocPartition
+from dataset import PascalVocPartition, Cifar10Partition
 from model import vit_tiny_patch16_224
 from early_stopper import EarlyStopper
 from feddf import FedDF
-from flwr.common import (parameters_to_ndarrays, ndarrays_to_parameters, FitRes, MetricsAggregationFn, NDArrays, Parameters, Scalar)
+from mha_loss import MHALoss
+from flwr.common import (parameters_to_ndarrays, ndarrays_to_parameters, FitRes, MetricsAggregationFn, NDArrays, Parameters, Scalar, Config)
 from flwr.server.client_proxy import ClientProxy
 from flwr.server.strategy.aggregate import aggregate
 import warnings
 warnings.filterwarnings("ignore")
-
+from tqdm import tqdm
+import multiprocessing
 import os
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env_comet'))
@@ -31,7 +33,7 @@ class CustomServer:
         self.experiment = experiment
         self.args = args  # add this line to save args as an instance attribute
         self.save_path = f"checkpoints/{args.port}/global"
-        self.early_stopper = EarlyStopper(patience=5, delta=1e-4, checkpoint_dir=self.save_path)
+        self.early_stopper = EarlyStopper(patience=10, delta=1e-4, checkpoint_dir=self.save_path)
         self.strategy = self.create_strategy(model, args.toy)
         self.model = model
         
@@ -51,10 +53,15 @@ class CustomServer:
 
     def get_evaluate_fn(self, model: torch.nn.Module, toy: bool):
         # trainset, _, _ = utils.load_data()
-        pascal_voc_partition = PascalVocPartition(args=self.args)
-        trainset, testset = pascal_voc_partition.load_partition(-1)
+        # pascal_voc_partition = PascalVocPartition(args=self.args)
+        # trainset, testset = pascal_voc_partition.load_partition(-1)
+        if self.args.dataset == "pascal_voc":
+            partition = PascalVocPartition(args=self.args)
+        elif self.args.dataset == "cifar10":
+            partition = Cifar10Partition(args=self.args)
+        trainset, testset = partition.load_partition(-1)
+        print(f"len(trainset) : {len(trainset)}, len(testset) : {len(testset)}")
         n_train = len(testset)
-        print(f"n_train: {n_train}")
         if toy:
             valset = torch.utils.data.Subset(testset, range(n_train - 10, n_train))
         else:
@@ -84,25 +91,34 @@ class CustomServer:
                 print(f"Early stopping : {self.early_stopper.counter} >= {self.early_stopper.patience}")
                 # todo : stop server
                 
-            if self.experiment is not None:
+            if self.experiment is not None and server_round != 0:
                 result = {f"test_" + k: v for k, v in result.items()}
                 self.experiment.log_metrics(result, step=server_round)
                 
+            print(f"result: {result}")
+            
             return float(loss), {"accuracy": float(accuracy)}
 
         return evaluate
     
     def load_public_loader(self):
-        pascal_voc_partition = PascalVocPartition(args=self.args)
-        trainset, testset = pascal_voc_partition.load_partition(-1)
-        n_train = len(testset)
+        if self.args.dataset == "pascal_voc":
+            pascal_voc_partition = PascalVocPartition(args=self.args)
+            publicset = pascal_voc_partition.load_public_dataset()
+        elif self.args.dataset == "cifar10":
+            partition = Cifar10Partition(args=self.args)
+            trainset, publicset = partition.load_partition(-1)
+        n_train = len(publicset)
         if self.args.toy:
-            publicset = torch.utils.data.Subset(testset, range(n_train - 10, n_train))
+            publicset = torch.utils.data.Subset(publicset, range(n_train - 10, n_train))
         else:
-            publicset = torch.utils.data.Subset(testset, range(0, n_train))
+            publicset = torch.utils.data.Subset(publicset, range(0, n_train))
         publicLoader = DataLoader(publicset, batch_size=self.args.batch_size)
         return publicLoader
     
+    # def get_properties(self, config: Config) -> Dict[str, Scalar]:
+    #     # return
+    #     return super().get_properties(config)
     def load_parameter(self, model: torch.nn.Module, parameters: fl.common.NDArrays)-> torch.nn.Module:
         state_dict = OrderedDict({k: torch.tensor(v) for k, v in zip(model.state_dict().keys(), parameters)})
         model.load_state_dict(state_dict, strict=True)
@@ -128,7 +144,7 @@ class CustomServer:
         with torch.no_grad():
             for inputs, _ in publicLoader:
                 inputs = inputs.to(device)
-                logits = model(inputs)
+                logits = model(inputs, return_attn=False)
                 logits_list.append(m(logits).detach())
 
         return torch.cat(logits_list, dim=0)
@@ -139,6 +155,10 @@ class CustomServer:
         ensembled_logits = torch.mean(stacked_logits, dim=0)
         return ensembled_logits
     
+    def get_class_count_from_dict(self, class_dict: Dict[str, Scalar]) -> List[int]:
+        """Get the number of classes from the class dictionary."""
+        return torch.tensor([max(1, int(class_dict[str(i)])) for i in range(self.args.num_classes)])
+    
     def fit_aggregation_fn(self, results: List[Tuple[ClientProxy, FitRes]]) -> Parameters:
         """Aggregate the results of the training rounds."""
 
@@ -148,14 +168,27 @@ class CustomServer:
         fedavg_model = self.get_fedavg_model(results)
 
         logits_list = []
-        for _, fit_res in results:
+        class_counts = []
+        for _, fit_res in tqdm(results):
             copied_model = copy.deepcopy(self.model)
             copied_model = self.load_parameter(copied_model, parameters_to_ndarrays(fit_res.parameters))
             logits = self.get_logits(copied_model, publicLoader)
             logits_list.append(logits)
 
+            class_counts.append(self.get_class_count_from_dict(fit_res.metrics))
+        total_logits = torch.stack(logits_list, dim=0)
+        class_counts = torch.stack(class_counts, dim=0)
+        print("total_logits", total_logits)
         # Step 2: Ensemble logits
-        ensembled_logits = self.ensemble_logits(logits_list)
+        logit_weights = class_counts / class_counts.sum(dim=0, keepdim=True)
+        if torch.isnan(logit_weights).any():
+            print("logit_weights is nan", logit_weights)
+        ensembled_logits = utils.compute_ensemble_logits(total_logits, logit_weights)
+        if torch.isnan(ensembled_logits).any():
+            print("ensembled_logits is nan", ensembled_logits)
+        print("ensembled_logits", ensembled_logits)
+        sim_weights = utils.calculate_normalized_similarity_weights(ensembled_logits, total_logits, "cosine")
+        print("sim_weights", sim_weights)
 
         # Step 3: Distill logits
         distilled_model = self.distill_training(fedavg_model, ensembled_logits, publicLoader)
@@ -183,15 +216,13 @@ class CustomServer:
             for i, (inputs, _) in enumerate(publicLoader):
                 inputs = inputs.to(device)
                 optimizer.zero_grad()
-
-                outputs = model(inputs)
+                outputs = model(inputs, return_attn=False)
                 outputs = m(outputs)
                 loss = criterion(outputs, ensembled_logits[i * self.args.batch_size:(i + 1) * self.args.batch_size].to(device))
                 loss.backward()
                 optimizer.step()
 
                 running_loss += loss.item()
-
             print(f"Distillation Epoch {epoch + 1}/{self.args.local_epochs}, Loss: {running_loss / len(publicLoader)}")
         return model
             
@@ -234,7 +265,7 @@ def init_argurments() -> argparse.Namespace:
     parser.add_argument("--datapath", type=str, default="~/.data/", required=False, help="dataset path")
     parser.add_argument("--alpha", type=float, default=0.5, required=False, help="alpha")
     parser.add_argument("--seed", type=int, default=1, required=False, help="seed")
-    parser.add_argument("--num_rounds", type=int, default=100, required=False, help="Number of rounds to run. Default: 100")
+    parser.add_argument("--num_rounds", type=int, default=30, required=False, help="Number of rounds to run. Default: 100")
     parser.add_argument("--dataset", type=str, default="pascal_voc", required=False, help="Dataset to use. Default: pascal_voc")
     parser.add_argument("--num_classes", type=int, default=20, required=False, help="Number of classes. Default: 10")
     parser.add_argument("--N_parties", type=int, default=5, required=False, help="Number of clients to use. Default: 10")

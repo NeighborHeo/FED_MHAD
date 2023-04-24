@@ -15,6 +15,7 @@ echo $experiment_key
 port=$(python -c "import random; print(random.randint(10000, 65535))")
 echo $port
 
+GPU_ID=0
 # Download the CIFAR-10 dataset
 # python -c "from torchvision.datasets import CIFAR10; CIFAR10('~/.data', download=True)"
 
@@ -22,14 +23,14 @@ echo $port
 python -c "import torch; torch.hub.load( 'NVIDIA/DeepLearningExamples:torchhub', 'nvidia_efficientnet_b0', pretrained=True)"
 
 echo "Starting server"
-CUDA_VISIBLE_DEVICES=1 python server.py \
+CUDA_VISIBLE_DEVICES=$GPU_ID python server.py \
     --experiment_key "$experiment_key" \
     --port "$port" &
 sleep 5  # Sleep for 3s to give the server enough time to start
 
 for i in `seq 0 19`; do
     echo "Starting client $i"
-    CUDA_VISIBLE_DEVICES=1 python client.py \
+    CUDA_VISIBLE_DEVICES=$GPU_ID python client.py \
         --index "$i" \
         --experiment_key "$experiment_key" \
         --port "$port" &

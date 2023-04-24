@@ -39,7 +39,7 @@ class CustomClient(fl.client.NumPyClient):
         self.args = args
         self.save_path = f"checkpoints/{args.port}/client_{args.index}_best_models"
         self.early_stopper = EarlyStopper(patience=10, delta=1e-4, checkpoint_dir=self.save_path)
-        self.class_counts = self.getClassCounts(self.trainset)
+        self.class_counts = self.getClassCounts(self.trainset, num_classes=args.num_classes)
     
     # def get_properties(self, config: Config) -> Dict[str, Scalar]:
     #     ret = super().get_properties(config)
@@ -48,9 +48,9 @@ class CustomClient(fl.client.NumPyClient):
     
     # def get_parameters(self, config: Config) -> NDArrays:
     #     return [val.cpu().numpy() for _, val in model.state_dict().items()]
-    def getClassCounts(self, dataset):
-        counts = np.bincount([dataset[i][1] for i in range(len(dataset))])
-        counts = {str(i): str(counts[i]) for i in range(len(counts))}
+    def getClassCounts(self, dataset, num_classes):
+        counts = np.bincount([dataset[i][1] for i in range(len(dataset))], minlength=num_classes)
+        counts = {str(i): str(counts[i]) for i in range(num_classes)}
         return counts
     
     def set_parameters(self, parameters):

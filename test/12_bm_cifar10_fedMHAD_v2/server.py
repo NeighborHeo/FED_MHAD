@@ -158,9 +158,9 @@ class CustomServer:
         ensembled_logits = torch.mean(stacked_logits, dim=0)
         return ensembled_logits
     
-    def get_class_count_from_dict(self, class_dict: Dict[str, int]) -> List[int]:
+    def get_class_count_from_dict(self, class_dict: Dict[str, Scalar]) -> List[int]:
         """Get the number of classes from the class dictionary."""
-        return [class_dict[i] for i in range(self.args.num_classes)]
+        return torch.tensor([int(class_dict[str(i)]) for i in range(self.args.num_classes)])
     
     def fit_aggregation_fn(self, results: List[Tuple[ClientProxy, FitRes]]) -> Parameters:
         """Aggregate the results of the training rounds."""
@@ -189,13 +189,14 @@ class CustomServer:
             logits_list.append(logits)
             attns_list.append(attns)
             class_counts.append(self.get_class_count_from_dict(fit_res.metrics))
+        total_logits = torch.stack(logits_list, dim=0)
         total_attns = torch.stack(attns_list, dim=0)
-        count_counts = torch.stack(class_counts, dim=0)
+        class_counts = torch.stack(class_counts, dim=0)
         
         # Step 2: Ensemble logits
         logit_weights = class_counts / class_counts.sum(dim=0, keepdim=True)
-        ensembled_logits = utils.compute_ensemble_logits(logits_list, logit_weights)
-        sim_weights = utils.calculate_normalized_similarity_weights(ensemble_logits, total_logits, "cosine")
+        ensembled_logits = utils.compute_ensemble_logits(total_logits, logit_weights)
+        sim_weights = utils.calculate_normalized_similarity_weights(ensembled_logits, total_logits, "cosine")
             
         # Step 3: Distill logits
         distilled_model = self.distill_training(fedavg_model, ensembled_logits, total_attns, sim_weights, publicLoader)

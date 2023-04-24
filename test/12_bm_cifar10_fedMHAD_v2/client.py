@@ -39,7 +39,7 @@ class CustomClient(fl.client.NumPyClient):
         self.args = args
         self.save_path = f"checkpoints/{args.port}/client_{args.index}_best_models"
         self.early_stopper = EarlyStopper(patience=10, delta=1e-4, checkpoint_dir=self.save_path)
-        self.class_counts = self.getClassCounts(self.trainset)
+        self.class_counts = self.getClassCounts(self.trainset, num_classes=args.num_classes)
     
     # def get_properties(self, config: Config) -> Dict[str, Scalar]:
     #     ret = super().get_properties(config)
@@ -48,13 +48,12 @@ class CustomClient(fl.client.NumPyClient):
     
     # def get_parameters(self, config: Config) -> NDArrays:
     #     return [val.cpu().numpy() for _, val in model.state_dict().items()]
-    def getClassCounts(self, dataset):
-        counts = np.bincount([dataset[i][1] for i in range(len(dataset))])
-        counts = {i: counts[i] for i in range(len(counts))}
+    def getClassCounts(self, dataset, num_classes):
+        counts = np.bincount([dataset[i][1] for i in range(len(dataset))], minlength=num_classes)
+        counts = {str(i): str(counts[i]) for i in range(num_classes)}
         return counts
     
     def set_parameters(self, parameters):
-        utils.print_func_and_line()
         """Loads a efficientnet model and replaces it parameters with the ones
         given."""
         model = vit_tiny_patch16_224(pretrained=True, num_classes=self.args.num_classes)
@@ -65,7 +64,6 @@ class CustomClient(fl.client.NumPyClient):
         return model
 
     def fit(self, parameters, config):
-        utils.print_func_and_line()
         """Train parameters on the locally held training set."""
 
         # Update local model parameters
@@ -110,7 +108,6 @@ class CustomClient(fl.client.NumPyClient):
         return parameters_prime, num_examples_train, results
 
     def evaluate(self, parameters, config):
-        utils.print_func_and_line()
         """Evaluate parameters on the locally held test set."""
         # Update local model parameters
         model = self.set_parameters(parameters)
@@ -164,7 +161,7 @@ def init_argurments():
     parser.add_argument("--port", type=int, default=8080, required=False, help="Port to use for the server. Default: 8080")
     parser.add_argument("--learning_rate", type=float, default=0.00002, required=False, help="Learning rate. Default: 0.1")
     parser.add_argument("--momentum", type=float, default=0.9, required=False, help="Momentum. Default: 0.9")
-    parser.add_argument("--weight_decay", type=float, default=1e-4, required=False, help="Weight decay. Default: 1e-4")
+    parser.add_argument("--weight_decay", type=float, default=1e-5, required=False, help="Weight decay. Default: 1e-5")
     parser.add_argument("--batch_size", type=int, default=32, required=False, help="Batch size. Default: 32")
     parser.add_argument("--datapath", type=str, default="~/.data/", required=False, help="dataset path")
     parser.add_argument("--alpha", type=float, default=0.1, required=False, help="alpha")
@@ -200,11 +197,8 @@ def test_load_cifar10_partition():
 
 def main() -> None:
     utils.set_seed(42)
-    utils.print_func_and_line()
     args = init_argurments()
-    utils.print_func_and_line()
     experiment = init_comet_experiment(args)
-    utils.print_func_and_line()
     
     if args.dry:
         client_dry_run(experiment, args)
@@ -213,16 +207,10 @@ def main() -> None:
         # trainset, testset = utils.load_partition(args.index)
         
         if args.dataset == "cifar10":
-            utils.print_func_and_line()
             cifar10_partition = Cifar10Partition(args)
-            utils.print_func_and_line()
             trainset, testset = cifar10_partition.load_partition(args.index)
-            num_of_data_per_class = cifar10_partition.get_num_of_data_per_class(trainset)
-            print(f"Number of data per class: {num_of_data_per_class}")
         else:
-            utils.print_func_and_line()
             pascal_voc_partition = PascalVocPartition(args)
-            utils.print_func_and_line()
             trainset, testset = pascal_voc_partition.load_partition(args.index)
             
         if args.toy:
@@ -230,9 +218,7 @@ def main() -> None:
             testset = torch.utils.data.Subset(testset, range(10))
 
         # Start Flower client
-        utils.print_func_and_line()
         client = CustomClient(trainset, testset, 0.1, experiment, args)
-        utils.print_func_and_line()
         fl.client.start_numpy_client(server_address=f"0.0.0.0:{args.port}", client=client)
 
     experiment.end()

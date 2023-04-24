@@ -13,7 +13,6 @@ from dataset import PascalVocPartition, Cifar10Partition
 from model import vit_tiny_patch16_224
 from early_stopper import EarlyStopper
 from feddf import FedDF
-from mha_loss import MHALoss
 from flwr.common import (parameters_to_ndarrays, ndarrays_to_parameters, FitRes, MetricsAggregationFn, NDArrays, Parameters, Scalar, Config)
 from flwr.server.client_proxy import ClientProxy
 from flwr.server.strategy.aggregate import aggregate

@@ -5,13 +5,14 @@ from torchvision.datasets import CIFAR10
 from tqdm import tqdm
 import os
 import inspect
-from metrics import compute_mean_average_precision, multi_label_top_margin_k_accuracy, compute_multi_accuracy
+from metrics import compute_mean_average_precision, multi_label_top_margin_k_accuracy, compute_multi_accuracy, compute_single_accuracy
 import warnings
 import unittest
 
 warnings.filterwarnings("ignore")
 
 # DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print_func_and_line = lambda: print(f"{os.path.basename(inspect.stack()[1].filename)}::{inspect.stack()[1].function}:{inspect.stack()[1].lineno}")
 
 def set_seed(seed):
     torch.manual_seed(0)
@@ -137,20 +138,96 @@ def test(net, testloader, steps: int = None, device: str = "cpu", args=None):
     
     output = np.concatenate(output_list, axis=0)
     target = np.concatenate(target_list, axis=0)
-
-    acc, = compute_multi_accuracy(output, target)
-    top_k = multi_label_top_margin_k_accuracy(target, output, margin=0)
-    mAP, _ = compute_mean_average_precision(target, output)
-    acc, top_k, mAP = round(acc, 4), round(top_k, 4), round(mAP, 4)
-    print("Accuracy: ", acc, "Top-k: ", top_k, "mAP: ", mAP)
-    print("Accuracy: ", correct / total, "Loss: ", loss / total)
-            
-    loss /= len(testloader.dataset)
-    accuracy = correct / len(testloader.dataset)
-    print("Accuracy: ", accuracy, "Loss: ", loss)
-    net.to("cpu")  # move model back to CPU
+    if args.task == 'singlelabel' :
+        acc = compute_single_accuracy(output, target)
+        loss /= len(testloader.dataset)
+        accuracy = correct / len(testloader.dataset)
+        net.to("cpu")  # move model back to CPU
+        return {"loss": loss, "accuracy": accuracy, "acc": acc}
+    else:
+        acc, = compute_multi_accuracy(output, target)
+        top_k = multi_label_top_margin_k_accuracy(target, output, margin=0)
+        mAP, _ = compute_mean_average_precision(target, output)
+        acc, top_k, mAP = round(acc, 4), round(top_k, 4), round(mAP, 4)
+        loss /= len(testloader.dataset)
+        accuracy = correct / len(testloader.dataset)
+        net.to("cpu")  # move model back to CPU        
+        return {"loss": loss, "accuracy": accuracy, "acc": acc, "top_k": top_k, "mAP": mAP}
     
-    return {"loss": loss, "accuracy": accuracy, "acc": acc, "top_k": top_k, "mAP": mAP}
+def compute_class_weights(class_counts):
+    """
+    Args:
+        class_counts (torch.Tensor): (num_samples, num_classes)
+    Returns:
+        class_weights (torch.Tensor): (num_samples, num_classes)
+    """
+    # Normalize the class counts per sample
+    class_weights = class_counts / class_counts.sum(dim=0, keepdim=True)
+    return class_weights
+    
+def compute_ensemble_logits(client_logits, class_weights):
+    """
+    Args:
+        client_logits (torch.Tensor): (num_samples, batch_size, num_classes)
+        class_weights (torch.Tensor): (num_samples, num_classes)
+    Returns:
+        ensemble_logits (torch.Tensor): (batch_size, num_classes)
+    """
+    weighted_logits = client_logits * class_weights.unsqueeze(1)  # (num_samples, batch_size, num_classes)
+    sum_weighted_logits = torch.sum(weighted_logits, dim=0)  # (batch_size, num_classes)
+    sum_weights = torch.sum(class_weights, dim=0)  # (num_classes)
+    ensemble_logits = sum_weighted_logits / sum_weights
+    return ensemble_logits
+
+def get_ensemble_logits(total_logits, selectN, logits_weights):
+    ensemble_logits = compute_ensemble_logits(total_logits, logits_weights)
+    return ensemble_logits
+
+def compute_euclidean_norm(vector_a, vector_b):
+    return torch.tensor(1) - torch.sqrt(torch.sum((vector_a - vector_b) ** 2, dim=-1))
+
+def compute_cosine_similarity(vector_a, vector_b):
+    # print(vector_a.shape, vector_b.shape)
+    cs = torch.sum(vector_a * vector_b, dim=-1) / (torch.norm(vector_a, dim=-1) * torch.norm(vector_b, dim=-1))
+    return cs
+
+def calculate_normalized_similarity_weights(target_vectors, client_vectors, similarity_method='euclidean'):
+    if similarity_method == 'euclidean':
+        similarity_function = compute_euclidean_norm
+    elif similarity_method == 'cosine':
+        similarity_function = compute_cosine_similarity
+    else:
+        raise ValueError("Invalid similarity method. Choose 'euclidean' or 'cosine'.")
+
+    target_vectors_expanded = target_vectors.unsqueeze(0)  # Shape: (1, batch_size, n_class)
+    
+    similarities = similarity_function(target_vectors_expanded, client_vectors)  # Shape: (n_client, batch_size)
+    mean_similarities = torch.mean(similarities, dim=1)  # Shape: (n_client)
+    normalized_similarity_weights = mean_similarities / torch.sum(mean_similarities)  # Shape: (n_client)
+    # print("normalized_similarity_weights", normalized_similarity_weights)
+    # print(normalized_similarity_weights)
+    return normalized_similarity_weights
+
+def get_logit_weights(total_logits, labels, countN, method='count'):
+    if method == 'ap':
+        import metrics
+        ap_list = []
+        for i in range(total_logits.shape[0]):
+            client_logits = total_logits[i].detach().cpu().numpy()
+            map, aps = metrics.compute_mean_average_precision(labels, client_logits)
+            ap_list.append(aps)
+        ap_list = np.array(ap_list)
+        ap_list = torch.from_numpy(ap_list).float().cuda()
+        ap_weights = ap_list / ap_list.sum(dim=0, keepdim=True)
+        return ap_weights
+    elif method == 'count':
+        class_counts = countN
+        class_counts = torch.from_numpy(class_counts).float().cuda()
+        class_weights = class_counts / class_counts.sum(dim=0, keepdim=True)
+        # class_weights = self.compute_class_weights(torch.from_numpy(class_counts).float().cuda())
+        return class_weights
+    else :
+        raise ValueError("Invalid weight method. Choose 'ap' or 'count'.")
 
 
 def replace_classifying_layer(efficientnet_model, num_classes: int = 10):

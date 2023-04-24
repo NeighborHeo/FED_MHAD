@@ -39,27 +39,12 @@ def calculateMetrics(y_true, y_score, th):
     f1 = calculateF1score(y_true, y_pred)
     return acc, pre, rec, f1
 
-def compute_single_accuracy(output, target, topk=(1,)):
-    with torch.no_grad():
-        if len(output.shape) == 2:
-            predicted = output.argmax(dim=1)
-        elif len(output.shape) == 1:
-            predicted = output.round().long()
-        else:
-            raise ValueError("Invalid output shape. Expected 1D or 2D tensor.")
-
-        if len(target.shape) == 2:
-            target = target.argmax(dim=1)
-        elif len(target.shape) == 1:
-            target = target.round().long()
-        else:
-            raise ValueError("Invalid target shape. Expected 1D or 2D tensor.")
-
-        correct = (predicted == target).sum().item()
-        total = target.size(0)
-
-        return correct / total
-
+def compute_single_accuracy(output, target):
+    import sklearn.metrics as metrics
+    output = np.argmax(output, axis=1)
+    acc = metrics.accuracy_score(target, output)
+    return acc
+    
 def compute_multi_accuracy(output, target, topk=(1,)):
     """
     usage:
@@ -85,6 +70,11 @@ def compute_multi_accuracy(output, target, topk=(1,)):
     return res
     
 def compute_mean_average_precision(y_true, y_pred_proba):
+    if np.any(np.isnan(y_pred_proba)):
+        print("y_pred_proba contains nan")
+        y_pred_proba[np.isnan(y_pred_proba)] = 0
+        return 0, np.zeros(y_true.shape[1])
+    
     average_precisions = []
     for i in range(y_true.shape[1]):
         if len(np.unique(y_true[:, i])) == 1:
@@ -122,12 +112,10 @@ def top_k_accuracy(y_true, y_pred_proba, k=5):
     assert k > 0, "k must be greater than 0."
     
     y_true = np.asarray(y_true)
-    print(y_true)
     y_pred_proba = np.asarray(y_pred_proba)
     
     # Get the top-k predicted class indices for each sample
     top_k_preds = np.argsort(y_pred_proba, axis=-1)[:, -k:]
-    print(top_k_preds)
     
     # Check if the true class is in the top-k predictions for each sample
     correct = [y_true[i] in top_k_preds[i] for i in range(len(y_true))]

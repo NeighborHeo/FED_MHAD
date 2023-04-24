@@ -158,7 +158,7 @@ class CustomServer:
     
     def get_class_count_from_dict(self, class_dict: Dict[str, Scalar]) -> List[int]:
         """Get the number of classes from the class dictionary."""
-        return torch.tensor([int(class_dict[str(i)]) for i in range(self.args.num_classes)])
+        return torch.tensor([max(1, int(class_dict[str(i)])) for i in range(self.args.num_classes)])
     
     def fit_aggregation_fn(self, results: List[Tuple[ClientProxy, FitRes]]) -> Parameters:
         """Aggregate the results of the training rounds."""
@@ -187,11 +187,14 @@ class CustomServer:
             class_counts.append(self.get_class_count_from_dict(fit_res.metrics))
         total_logits = torch.stack(logits_list, dim=0)
         class_counts = torch.stack(class_counts, dim=0)
-        
+        print("total_logits", total_logits)
         # Step 2: Ensemble logits
         logit_weights = class_counts / class_counts.sum(dim=0, keepdim=True)
+        if torch.isnan(logit_weights).any():
+            print("logit_weights is nan", logit_weights)
         ensembled_logits = utils.compute_ensemble_logits(total_logits, logit_weights)
-            
+        if torch.isnan(ensembled_logits).any():
+            print("ensembled_logits is nan", ensembled_logits)
         # Step 3: Distill logits
         distilled_model = self.distill_training(fedavg_model, ensembled_logits, publicLoader)
         distilled_parameters = [val.cpu().numpy() for _, val in distilled_model.state_dict().items()]

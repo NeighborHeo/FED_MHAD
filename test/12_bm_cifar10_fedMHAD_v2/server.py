@@ -160,7 +160,7 @@ class CustomServer:
     
     def get_class_count_from_dict(self, class_dict: Dict[str, Scalar]) -> List[int]:
         """Get the number of classes from the class dictionary."""
-        return torch.tensor([int(class_dict[str(i)]) for i in range(self.args.num_classes)])
+        return torch.tensor([max(1, int(class_dict[str(i)])) for i in range(self.args.num_classes)])
     
     def fit_aggregation_fn(self, results: List[Tuple[ClientProxy, FitRes]]) -> Parameters:
         """Aggregate the results of the training rounds."""
@@ -192,12 +192,17 @@ class CustomServer:
         total_logits = torch.stack(logits_list, dim=0)
         total_attns = torch.stack(attns_list, dim=0)
         class_counts = torch.stack(class_counts, dim=0)
-        
+        print("total_logits", total_logits)
         # Step 2: Ensemble logits
         logit_weights = class_counts / class_counts.sum(dim=0, keepdim=True)
+        if torch.isnan(logit_weights).any():
+            print("logit_weights is nan", logit_weights)
         ensembled_logits = utils.compute_ensemble_logits(total_logits, logit_weights)
+        if torch.isnan(ensembled_logits).any():
+            print("ensembled_logits is nan", ensembled_logits)
+        print("ensembled_logits", ensembled_logits)
         sim_weights = utils.calculate_normalized_similarity_weights(ensembled_logits, total_logits, "cosine")
-            
+        print("sim_weights", sim_weights)
         # Step 3: Distill logits
         distilled_model = self.distill_training(fedavg_model, ensembled_logits, total_attns, sim_weights, publicLoader)
         distilled_parameters = [val.cpu().numpy() for _, val in distilled_model.state_dict().items()]
@@ -229,6 +234,10 @@ class CustomServer:
                 outputs = m(outputs)
                 loss = criterion(outputs, ensembled_logits[i * self.args.batch_size:(i + 1) * self.args.batch_size].to(device))
                 loss2 = criterion2(total_attns[:, i * self.args.batch_size:(i + 1) * self.args.batch_size].to(device), attns, sim_weights)
+                if torch.isnan(loss):
+                    print("loss is NaN")
+                if torch.isnan(loss2):
+                    print("loss2 is NaN")
                 lambda_ = 0.09
                 total_loss = (1-lambda_) * loss + lambda_ * loss2
                 total_loss.backward()

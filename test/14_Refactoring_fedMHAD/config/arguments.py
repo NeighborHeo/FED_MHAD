@@ -5,7 +5,6 @@ def init_args(server=True):
     parser = argparse.ArgumentParser(description="Start Flower server or client with experiment key.")
     
     # common arguments
-    parser.add_argument("--server", action="store_true", default=server, help="Set to true to run as server, false to run as client. Default: server=True")
     parser.add_argument("--experiment_key", type=str, default="test_key", required=False, help="Experiment key") 
     parser.add_argument("--model_name", type=str, default="vit_tiny_patch16_224", required=False, help="Model to use. Default: vit_tiny_patch16_224")
     parser.add_argument("--use_cuda", action="store_true", default=False, help="Set to true to use cuda. Default: False") 
@@ -27,11 +26,12 @@ def init_args(server=True):
     parser.add_argument("--weight_decay", type=float, default=1e-5, required=False, help="Weight decay. Default: 1e-5")
     parser.add_argument("--batch_size", type=int, default=32, required=False, help="Batch size. Default: 32")
     # server arguments
-    parser.add_argument("--strategy", type=str, default="fedavg", required=False, help="Strategy to use. Default: fedmhad")
+    if server:
+        parser.add_argument("--strategy", type=str, default="fedmhad", required=False, help="Strategy to use. Default: fedmhad")
     # client arguments
-    parser.add_argument("--index", type=int, default=0, required=False, help="Index of the client")
-    parser.add_argument("--partition", type=int, default=0, choices=range(0, 10), required=False, help="Specifies the artificial data partition of CIFAR10 to be used. Picks partition 0 by default" )
-    parser.add_argument("--dry", type=bool, default=False, required=False, help="Set to true to use only 10 datasamples for validation. Useful for testing purposes. Default: False" )
+    if not server:
+        parser.add_argument("--index", type=int, default=0, required=False, help="Index of the client")
+        parser.add_argument("--dry", type=bool, default=False, required=False, help="Set to true to use only 10 datasamples for validation. Useful for testing purposes. Default: False" )
 
     args = parser.parse_args()
     if args.dataset == "pascal_voc":

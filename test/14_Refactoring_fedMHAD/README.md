@@ -1,53 +1,37 @@
-# Advanced Flower Example (PyTorch)
+# Federated Learning with Multi-head Attention Distillation for Interpretability on Heterogeneous Clients
 
-This example demonstrates an advanced federated learning setup using Flower with PyTorch. It differs from the quickstart example in the following ways:
+## Introduction
 
-- 10 clients (instead of just 2)
-- Each client holds a local dataset of 5000 training examples and 1000 test examples
-- Server-side model evaluation after parameter aggregation
-- Hyperparameter schedule using config functions
-- Custom return values
-- Server-side parameter initialization
+this projects is the implementation of the paper [FedMHAD: Federated Learning with Multi-head Attention Distillation for Interpretability on Heterogeneous Clients]() in PyTorch.
 
-## Project Setup
+## Install
 
-Start by cloning the example project. We prepared a single-line command that you can copy into your shell which will checkout the example for you:
+install pytorch and torchvision from [official website](https://pytorch.org/get-started/previous-versions/) according to the CUDA and GPU settings for your PC.
 
-```shell
-git clone --depth=1 https://github.com/adap/flower.git && mv flower/examples/advanced_pytorch . && rm -rf flower && cd advanced_pytorch
-```
+pip install -r requirements.txt
 
-This will create a new directory called `advanced_pytorch` containing the following files:
+## Running code
 
-```shell
--- pyproject.toml
--- client.py
--- server.py
--- README.md
--- run.sh
-```
+execute "run.sh" file 
 
-Project dependencies (such as `pytorch` and `flwr`) are defined in `pyproject.toml`. We recommend [Poetry](https://python-poetry.org/docs/) to install those dependencies and manage your virtual environment ([Poetry installation](https://python-poetry.org/docs/#installation)), but feel free to use a different way of installing dependencies and managing virtual environments if you have other preferences.
+## Prepare Dataset
 
-```shell
-poetry install
-poetry shell
-```
+(will add prepare dataset code later)
 
-Poetry will install all your dependencies in a newly created virtual environment. To verify that everything works correctly you can run the following command:
+## Results
 
-```shell
-poetry run python3 -c "import flwr"
-```
+| Method | Accuracy |
+| :------- | --------:|
+| FedAvg | - |
+| FedDF | - |
+| FedMHAD | - |
 
-If you don't see any errors you're good to go!
+## authors
 
-# Run Federated Learning with PyTorch and Flower
+- [suncheolheo](https://github.com/NeighborHeo) / suncheolheo@yuhs.ac
 
-The included `run.sh` will start the Flower server (using `server.py`), sleep for 2 seconds to ensure the the server is up, and then start 10 Flower clients (using `client.py`). You can simply start everything in a terminal as follows:
+## Citation
 
-```shell
-poetry run ./run.sh
-```
+## Note
 
-The `run.sh` script starts processes in the background so that you don't have to open eleven terminal windows. If you experiment with the code example and something goes wrong, simply using `CTRL + C` on Linux (or `CMD + C` on macOS) wouldn't normally kill all these processes, which is why the script ends with `trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM EXIT` and `wait`. This simply allows you to stop the experiment using `CTRL + C` (or `CMD + C`). If you change the script and anyhting goes wrong you can still use `killall python` (or `killall python3`) to kill all background processes (or a more specific command if you have other Python processes running that you don't want to kill).
+This federated learning code was implemented using [Flower Framework](https://github.com/adap/flower) codes.

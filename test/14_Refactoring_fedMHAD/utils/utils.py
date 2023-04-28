@@ -1,13 +1,21 @@
+import os
+import sys
+
 import numpy as np
 import torch
 import torchvision.transforms as transforms
+from torch.utils.data import DataLoader
 from torchvision.datasets import CIFAR10
-from tqdm import tqdm
-import os
+
 import inspect
-from metrics import compute_mean_average_precision, multi_label_top_margin_k_accuracy, compute_multi_accuracy, compute_single_accuracy
+import argparse
+from .metrics import compute_mean_average_precision, multi_label_top_margin_k_accuracy, compute_multi_accuracy, compute_single_accuracy
 import warnings
 import unittest
+from tqdm import tqdm
+
+sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
+from loss import MHALoss
 
 warnings.filterwarnings("ignore")
 
@@ -15,12 +23,12 @@ warnings.filterwarnings("ignore")
 print_func_and_line = lambda: print(f"{os.path.basename(inspect.stack()[1].filename)}::{inspect.stack()[1].function}:{inspect.stack()[1].lineno}")
 
 def set_seed(seed):
-    torch.manual_seed(0)
-    torch.cuda.manual_seed(0)
-    torch.cuda.manual_seed_all(0)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    np.random.seed(0)
+    np.random.seed(seed)
     
 def load_data():
     
@@ -153,7 +161,75 @@ def test(net, testloader, steps: int = None, device: str = "cpu", args=None):
         accuracy = correct / len(testloader.dataset)
         net.to("cpu")  # move model back to CPU        
         return {"loss": loss, "accuracy": accuracy, "acc": acc, "top_k": top_k, "mAP": mAP}
-    
+
+def distill_with_logits(model: torch.nn.Module, ensembled_logits: torch.Tensor, publicLoader: DataLoader, args: argparse.Namespace) -> torch.nn.Module:
+    """Perform distillation training."""
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    model.train()
+
+    criterion = torch.nn.MultiLabelSoftMarginLoss().to(device)
+    last_layer_name = list(model.named_children())[-1][0]
+    parameters = [
+        {'params': [p for n, p in model.named_parameters() if last_layer_name not in n], 'lr': args.learning_rate},
+        {'params': [p for n, p in model.named_parameters() if last_layer_name in n], 'lr': args.learning_rate*100},
+    ]
+    optimizer = torch.optim.SGD(params= parameters, lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay)
+
+    m = torch.nn.Sigmoid()
+    for epoch in range(args.local_epochs):
+        running_loss = 0.0
+        for i, (inputs, _) in enumerate(publicLoader):
+            inputs = inputs.to(device)
+            optimizer.zero_grad()
+            outputs, attns = model(inputs, return_attn=True)
+            outputs = m(outputs)
+            loss = criterion(outputs, ensembled_logits[i * args.batch_size:(i + 1) * args.batch_size].to(device))
+            lambda_ = 0.09
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item()
+        print(f"Distillation Epoch {epoch + 1}/{args.local_epochs}, Loss: {running_loss / len(publicLoader)}")
+    return model
+
+def distill_with_logits_n_attns(model: torch.nn.Module, ensembled_logits: torch.Tensor, total_attns: torch.Tensor, sim_weights: torch.Tensor, publicLoader: DataLoader, args: argparse.Namespace) -> torch.nn.Module:
+    """Perform distillation training."""
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    model.train()
+
+    criterion = torch.nn.MultiLabelSoftMarginLoss().to(device)
+    criterion2 = MHALoss().to(device)
+    last_layer_name = list(model.named_children())[-1][0]
+    parameters = [
+        {'params': [p for n, p in model.named_parameters() if last_layer_name not in n], 'lr': args.learning_rate},
+        {'params': [p for n, p in model.named_parameters() if last_layer_name in n], 'lr': args.learning_rate*100},
+    ]
+    optimizer = torch.optim.SGD(params= parameters, lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay)
+
+    m = torch.nn.Sigmoid()
+    for epoch in range(args.local_epochs):
+        running_loss = 0.0
+        for i, (inputs, _) in enumerate(publicLoader):
+            inputs = inputs.to(device)
+            optimizer.zero_grad()
+            outputs, attns = model(inputs, return_attn=True)
+            outputs = m(outputs)
+            loss = criterion(outputs, ensembled_logits[i * args.batch_size:(i + 1) * args.batch_size].to(device))
+            loss2 = criterion2(total_attns[:, i * args.batch_size:(i + 1) * args.batch_size].to(device), attns, sim_weights)
+            # if torch.isnan(loss):
+            #     print("loss is NaN")
+            # if torch.isnan(loss2):
+            #     print("loss2 is NaN")
+            lambda_ = 0.09
+            total_loss = (1-lambda_) * loss + lambda_ * loss2
+            total_loss.backward()
+            optimizer.step()
+
+            running_loss += total_loss.item()
+        print(f"Distillation Epoch {epoch + 1}/{args.local_epochs}, Loss: {running_loss / len(publicLoader)}")
+    return model
+
 def compute_class_weights(class_counts):
     """
     Args:
@@ -261,6 +337,7 @@ def load_efficientnet(entrypoint: str = "nvidia_efficientnet_b0", classes: int =
 def get_model_params(model):
     """Returns a model's parameters."""
     return [val.cpu().numpy() for _, val in model.state_dict().items()]
+
 
 if __name__ == '__main__':
     unittest.main()

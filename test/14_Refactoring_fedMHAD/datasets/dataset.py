@@ -48,29 +48,29 @@ class mydataset(torch.utils.data.Dataset):
         return self.gt
 
 
-def get_dirichlet_distribution(N_class, N_parties, alpha=1):
+def get_dirichlet_distribution(N_class, num_clients, alpha=1):
     """ get dirichlet split data class index for each party
     Args:
         N_class (int): num of classes
-        N_parties (int): num of parties
+        num_clients (int): num of parties
         alpha (int): dirichlet alpha
     Returns:
         split_arr (list(list)): dirichlet split array (num of classes * num of parties)
     """
-    return np.random.dirichlet([alpha]*N_parties, N_class)
+    return np.random.dirichlet([alpha]*num_clients, N_class)
 
-def get_dirichlet_distribution_count(N_class, N_parties, y_data, alpha=1):
+def get_dirichlet_distribution_count(N_class, num_clients, y_data, alpha=1):
     """ get count of dirichlet split data class index for each party
     Args:
         N_class (int): num of classes
-        N_parties (int): num of parties
+        num_clients (int): num of parties
         y_data (array): y_label (num of samples * 1)
         alpha (int): dirichlet alpha
     Returns:
         split_cumsum_index (list(list)): dirichlet split index (num of classes * num of parties)
     """
     y_bincount = np.bincount(y_data).reshape(-1, 1)
-    dirichlet_arr = get_dirichlet_distribution(N_class, N_parties, alpha)
+    dirichlet_arr = get_dirichlet_distribution(N_class, num_clients, alpha)
     dirichlet_count = (dirichlet_arr * y_bincount).astype(int)
     return dirichlet_count
 
@@ -84,9 +84,9 @@ def get_split_data_index(y_data, split_count):
     """
     split_cumsum_index = np.cumsum(split_count, axis=1)
     N_class = split_cumsum_index.shape[0]
-    N_parties = split_cumsum_index.shape[1]
+    num_clients = split_cumsum_index.shape[1]
     split_data_index_dict = {}
-    for party_id in range(N_parties):
+    for party_id in range(num_clients):
         split_data_index_dict[party_id] = []
         for class_id in range(N_class):
             y_class_index = np.where(np.array(y_data) == class_id)[0]
@@ -104,9 +104,9 @@ def get_split_data(x_data, y_data, split_data_index_dict):
     Returns:
         split_data (dict): {party_id: {x: x_data, y: y_label, idx: [sample_class_index], len: num of samples}}
     """
-    N_parties = len(split_data_index_dict)
+    num_clients = len(split_data_index_dict)
     split_data = {}
-    for party_id in range(N_parties):
+    for party_id in range(num_clients):
         split_data[party_id] = {}
         split_data[party_id]["x"] = [x_data[i] for i in split_data_index_dict[party_id]]
         split_data[party_id]["y"] = [y_data[i] for i in split_data_index_dict[party_id]]
@@ -114,18 +114,18 @@ def get_split_data(x_data, y_data, split_data_index_dict):
         split_data[party_id]["len"] = len(split_data_index_dict[party_id])
     return split_data
 
-def get_dirichlet_split_data(X_data, y_data, N_parties, N_class, alpha=1):
+def get_dirichlet_split_data(X_data, y_data, num_clients, N_class, alpha=1):
     """ get split data for each party by dirichlet distribution
     Args:
         X_data (array): x_data (num of samples * feature_dim)
         y_data (array): y_label (num of samples * 1)
-        N_parties (int): num of parties
+        num_clients (int): num of parties
         N_class (int): num of classes
         alpha (int): dirichlet alpha
     Returns:
         split_data (dict): {party_id: {x: x_data, y: y_label, idx: [sample_class_index], len: num of samples}}
     """
-    dirichlet_count = get_dirichlet_distribution_count(N_class, N_parties, y_data, alpha)
+    dirichlet_count = get_dirichlet_distribution_count(N_class, num_clients, y_data, alpha)
     split_dirichlet_data_index_dict = get_split_data_index(y_data, dirichlet_count)
     split_dirichlet_data_dict = get_split_data(X_data, y_data, split_dirichlet_data_index_dict)
     return split_dirichlet_data_dict
@@ -150,12 +150,12 @@ class Cifar10Partition:
     def __init__(self, args: argparse.Namespace):
         utils.print_func_and_line()
         self.args = args
-        # print("N_parties: ", self.args.N_parties, "N_class: ", self.args.num_classes, "alpha: ", self.args.alpha)
+        # print("num_clients: ", self.args.num_clients, "N_class: ", self.args.num_classes, "alpha: ", self.args.alpha)
         # self.partition_indices = self.init_partition()
         
     def init_partition(self):
         utils.print_func_and_line()
-        self.split_data = get_dirichlet_split_data(self.train_images, self.train_labels, self.args.N_parties, self.args.num_classes, self.args.alpha)
+        self.split_data = get_dirichlet_split_data(self.train_images, self.train_labels, self.args.num_clients, self.args.num_classes, self.args.alpha)
         
     def load_partition(self, i: int):
         utils.print_func_and_line()
@@ -199,13 +199,13 @@ class Cifar10Partition:
 #         # print("trainset: ", len(self.trainset), "testset.data: ", len(self.testset[:][0]), "testset.targets: ", len(self.testset[:][1]))
 #         self.alpha = 0.1
 #         self.N_class = 10
-#         self.N_parties = 20
+#         self.num_clients = 20
 #         self.partition_indices = self.init_partition()
         
 #     def init_partition(self):
 #         self.X_train_data = np.array([self.trainset.data[i] for i in self.train_indices])
 #         self.y_train_data = np.array([self.trainset.targets[i] for i in self.train_indices])
-#         self.split_data = get_dirichlet_split_data(self.X_train_data, self.y_train_data, self.N_parties, self.N_class, self.alpha)
+#         self.split_data = get_dirichlet_split_data(self.X_train_data, self.y_train_data, self.num_clients, self.N_class, self.alpha)
         
 #     def load_partition(self, i: int, alpha=0.1):
 #         if i == -1:
@@ -220,7 +220,7 @@ class Cifar10Partition:
 #         # train_partition = torch.utils.data.Subset(self.trainset, range(0, 16))
         
 #         # 테스트 세트는 크기를 일정하게 자른다. 
-#         len_test = int(len(self.testset) / self.N_parties)
+#         len_test = int(len(self.testset) / self.num_clients)
 #         test_partition = torch.utils.data.Subset(self.testset, range(i*len_test, (i+1)*len_test))
 #         # test_partition = torch.utils.data.Subset(self.testset, range(0, 16))
 #         return train_partition, test_partition
@@ -234,8 +234,8 @@ class PascalVocPartition:
     def __init__(self, args: argparse.Namespace):
         self.args = args
         self.priv_data = {}
-        # self.path = pathlib.Path(args.datapath).joinpath('PASCAL_VOC_2012', f'N_clients_{args.N_parties}_alpha_{args.alpha:.1f}')
-        # self.path = pathlib.Path.home().joinpath('.data', 'PASCAL_VOC_2012_sampling', f'N_clients_{args.N_parties}_alpha_{args.alpha:.1f}')
+        # self.path = pathlib.Path(args.datapath).joinpath('PASCAL_VOC_2012', f'N_clients_{args.num_clients}_alpha_{args.alpha:.1f}')
+        # self.path = pathlib.Path.home().joinpath('.data', 'PASCAL_VOC_2012_sampling', f'N_clients_{args.num_clients}_alpha_{args.alpha:.1f}')
         self.path = pathlib.Path.home().joinpath('.data', 'PASCAL_VOC_2012', 'N_clients_5_alpha_1.0')
     
     def load_partition(self, i: int):
@@ -243,7 +243,7 @@ class PascalVocPartition:
         if i == -1:
             concat_images = []
             concat_labels = []
-            for i in range(self.args.N_parties):
+            for i in range(self.args.num_clients):
                 party_img = np.load(self.path.joinpath(f'Party_{i}_X_data.npy'))
                 party_label = np.load(self.path.joinpath(f'Party_{i}_y_data.npy'))
                 concat_images.append(party_img)
@@ -264,7 +264,7 @@ class PascalVocPartition:
             test_imgs = np.load(path.joinpath('val_images_sub.npy'))
             test_labels = np.load(path.joinpath('val_labels_sub.npy'))
             test_imgs, test_labels = self.filter_images_by_label_type(self.args.task, test_imgs, test_labels)
-            n_test = int(test_imgs.shape[0] / self.args.N_parties)
+            n_test = int(test_imgs.shape[0] / self.args.num_clients)
             test_dataset = mydataset(test_imgs, test_labels)
             test_partition = torch.utils.data.Subset(test_dataset, range(i * n_test, (i + 1) * n_test))
 
@@ -315,7 +315,7 @@ class Test_PascalVocPartition(unittest.TestCase):
     def test_load_partition(self):
         args = argparse.Namespace()
         args.datapath = '~/.data'
-        args.N_parties = 5
+        args.num_clients = 5
         args.alpha = 1.0
         args.task = 'multilabel'
         args.batch_size = 16

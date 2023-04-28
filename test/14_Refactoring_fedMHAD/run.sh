@@ -28,7 +28,7 @@ CUDA_VISIBLE_DEVICES=$GPU_ID python server.py \
     --port "$port" &
 sleep 10  # Sleep for 3s to give the server enough time to start
 
-for i in `seq 0 4`; do
+for i in `seq 0 1`; do
     echo "Starting client $i"
     CUDA_VISIBLE_DEVICES=$GPU_ID python client.py \
         --index "$i" \

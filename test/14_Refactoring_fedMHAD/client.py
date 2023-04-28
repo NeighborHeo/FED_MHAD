@@ -10,9 +10,9 @@ from typing import Optional, Dict, List
 from flwr.common import Scalar, Config, NDArrays
 import warnings
 import utils
-from model import vit_tiny_patch16_224
-from dataset import PascalVocPartition, Cifar10Partition
-from early_stopper import EarlyStopper
+import datasets
+import models
+import config
 
 warnings.filterwarnings("ignore")
 
@@ -38,7 +38,7 @@ class CustomClient(fl.client.NumPyClient):
         self.experiment = experiment
         self.args = args
         self.save_path = f"checkpoints/{args.port}/client_{args.index}_best_models"
-        self.early_stopper = EarlyStopper(patience=10, delta=1e-4, checkpoint_dir=self.save_path)
+        self.early_stopper = utils.EarlyStopper(patience=10, delta=1e-4, checkpoint_dir=self.save_path)
         self.class_counts = self.getClassCounts(self.trainset, num_classes=args.num_classes)
     
     # def get_properties(self, config: Config) -> Dict[str, Scalar]:
@@ -60,7 +60,7 @@ class CustomClient(fl.client.NumPyClient):
     def set_parameters(self, parameters):
         """Loads a efficientnet model and replaces it parameters with the ones
         given."""
-        model = vit_tiny_patch16_224(pretrained=True, num_classes=self.args.num_classes)
+        model = models.get_vit_model(self.args.model_name, self.args.num_classes, self.args.pretrained) 
         params_dict = zip(model.state_dict().keys(), parameters)
         state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
         # save file 
@@ -138,7 +138,7 @@ def client_dry_run(experiment: Optional[Experiment] = None
     """Weak tests to check whether all client methods are working as
     expected."""
     
-    model = vit_tiny_patch16_224(pretrained=True, num_classes=args.num_classes)
+    model = models.get_vit_model(args.model_name, args.num_classes, args.pretrained)
     trainset, testset = utils.load_partition(0)
     trainset = torch.utils.data.Subset(trainset, range(10))
     testset = torch.utils.data.Subset(testset, range(10))
@@ -153,34 +153,6 @@ def client_dry_run(experiment: Optional[Experiment] = None
     client.evaluate(utils.get_model_params(model), {"val_steps": 32})
     print("Dry Run Successful")
 
-def init_argurments():
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Start Flower server with experiment key.")
-    parser.add_argument("--index", type=int, default=0, required=False, help="Index of the client")
-    parser.add_argument("--experiment_key", type=str, default="test_key", required=False, help="Experiment key")
-    parser.add_argument("--toy", type=bool, default=False, required=False, help="Set to true to use only 10 datasamples for validation. Useful for testing purposes. Default: False" )
-    parser.add_argument("--use_cuda", type=bool, default=True, required=False, help="Set to true to use GPU. Default: False" )
-    parser.add_argument("--partition", type=int, default=0, choices=range(0, 10), required=False, help="Specifies the artificial data partition of CIFAR10 to be used. Picks partition 0 by default" )
-    parser.add_argument("--dry", type=bool, default=False, required=False, help="Set to true to use only 10 datasamples for validation. Useful for testing purposes. Default: False" )
-    parser.add_argument("--port", type=int, default=8080, required=False, help="Port to use for the server. Default: 8080")
-    parser.add_argument("--learning_rate", type=float, default=0.00002, required=False, help="Learning rate. Default: 0.1")
-    parser.add_argument("--momentum", type=float, default=0.9, required=False, help="Momentum. Default: 0.9")
-    parser.add_argument("--weight_decay", type=float, default=1e-5, required=False, help="Weight decay. Default: 1e-5")
-    parser.add_argument("--batch_size", type=int, default=32, required=False, help="Batch size. Default: 32")
-    parser.add_argument("--datapath", type=str, default="~/.data/", required=False, help="dataset path")
-    parser.add_argument("--alpha", type=float, default=1.0, required=False, help="alpha")
-    parser.add_argument("--seed", type=int, default=1, required=False, help="seed")
-    parser.add_argument("--num_rounds", type=int, default=30, required=False, help="Number of rounds to run. Default: 100")
-    parser.add_argument("--dataset", type=str, default="pascal_voc", required=False, help="Dataset to use. Default: pascal_voc")
-    parser.add_argument("--num_classes", type=int, default=20, required=False, help="Number of classes. Default: 10")
-    parser.add_argument("--N_parties", type=int, default=5, required=False, help="Number of clients to use. Default: 10")
-    parser.add_argument("--task", type=str, default="multilabel", required=False, help="Task to run. Default: multilabel")
-    parser.add_argument("--noisy", type=float, default=0.0, required=False, help="Percentage of noisy data. Default: 0.0")
-    
-    args = parser.parse_args()
-    print("Experiment key:", args.experiment_key, "port:", args.port)
-    return args
-
 def init_comet_experiment(args: argparse.Namespace):
     experiment = Experiment(
         api_key = os.getenv('COMET_API_TOKEN'),
@@ -192,15 +164,16 @@ def init_comet_experiment(args: argparse.Namespace):
     return experiment
 
 def test_load_cifar10_partition():
-    args = init_argurments()
-    cifar10_partition = Cifar10Partition(args)
+    args = config.init_args(server=False)
+    cifar10_partition = datasets.Cifar10Partition(args)
     trainset, testset = cifar10_partition.load_partition(args.index)
     num_of_data_per_class = cifar10_partition.get_num_of_data_per_class(trainset)
     print(f"Number of data per class: {num_of_data_per_class}")
     return num_of_data_per_class
+
 def main() -> None:
     utils.set_seed(42)
-    args = init_argurments()
+    args = config.init_args(server=False)
     experiment = init_comet_experiment(args)
     
     if args.dry:
@@ -210,10 +183,10 @@ def main() -> None:
         # trainset, testset = utils.load_partition(args.index)
         
         if args.dataset == "cifar10":
-            cifar10_partition = Cifar10Partition(args)
+            cifar10_partition = datasets.Cifar10Partition(args)
             trainset, testset = cifar10_partition.load_partition(args.index)
         else:
-            pascal_voc_partition = PascalVocPartition(args)
+            pascal_voc_partition = datasets.PascalVocPartition(args)
             trainset, testset = pascal_voc_partition.load_partition(args.index)
             
         if args.toy:
